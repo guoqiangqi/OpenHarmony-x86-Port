@@ -1,0 +1,24 @@
+diff --git a/sepolicy/base/system/file_contexts b/sepolicy/base/system/file_contexts
+index db007ed3f..2dd1f338d 100644
+--- a/sepolicy/base/system/file_contexts
++++ b/sepolicy/base/system/file_contexts
+@@ -29,6 +29,11 @@
+ /preload      u:object_r:system_file:s0
+ /tmp      u:object_r:rootfs:s0
+ /sys           u:object_r:sys_file:s0
++/run                u:object_r:rootfs:s0
++/var                u:object_r:rootfs:s0
++/opt                u:object_r:rootfs:s0
++/usr                u:object_r:rootfs:s0
++/lib                u:object_r:rootfs:s0
+ 
+ /dev(/.*)?       u:object_r:dev_file:s0
+ /dev/functionfs(/.*)?       u:object_r:dev_functionfs_file:s0
+@@ -175,6 +180,7 @@
+ /chip_prod(/.*)?     u:object_r:chip_prod_file:s0
+ /chip_ckm(/.*)?      u:object_r:chip_ckm_file:s0
+ 
++/eng_chipsetrun(/.*)?     u:object_r:system_file:s0
+ /eng_system(/.*)?           u:object_r:system_file:s0
+ /eng_system/etc(/.*)?       u:object_r:system_etc_file:s0
+ /eng_system/lib(/.*)?       u:object_r:system_lib_file:s0

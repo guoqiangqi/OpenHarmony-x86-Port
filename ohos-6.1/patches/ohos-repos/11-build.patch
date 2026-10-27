@@ -1,0 +1,143 @@
+diff --git a/build_scripts/build.sh b/build_scripts/build.sh
+index d02beed0..5a50f2dd 100755
+--- a/build_scripts/build.sh
++++ b/build_scripts/build.sh
+@@ -113,7 +113,7 @@ fi
+ export PATH=${SOURCE_ROOT_DIR}/prebuilts/build-tools/${HOST_DIR}/bin:${PYTHON3_DIR}/bin:$PATH
+ 
+ # set nodejs and ohpm
+-EXPECTED_NODE_VERSION="14.21.1"
++EXPECTED_NODE_VERSION="18.20.1"
+ export PATH=${SOURCE_ROOT_DIR}/prebuilts/build-tools/common/nodejs/node-v${EXPECTED_NODE_VERSION}-${NODE_PLATFORM}/bin:$PATH
+ export NODE_HOME=${SOURCE_ROOT_DIR}/prebuilts/build-tools/common/nodejs/node-v${EXPECTED_NODE_VERSION}-${NODE_PLATFORM}
+ export PATH=${SOURCE_ROOT_DIR}/prebuilts/build-tools/common/oh-command-line-tools/ohpm/bin:$PATH
+diff --git a/config/BUILDCONFIG.gn b/config/BUILDCONFIG.gn
+index 5930ced3..c87bc75f 100755
+--- a/config/BUILDCONFIG.gn
++++ b/config/BUILDCONFIG.gn
+@@ -385,8 +385,7 @@ is_wearable_product = "${target_platform}" == "wearable"
+ 
+ is_intellitv_product = "${target_platform}" == "intellitv"
+ 
+-if ((target_os == "ohos" && target_cpu == "x86_64") ||
+-    device_company == "emulator") {
++if (device_company == "emulator") {
+   is_emulator = true
+ }
+ 
+diff --git a/config/compiler/BUILD.gn b/config/compiler/BUILD.gn
+index be3d7ed5..975e1937 100755
+--- a/config/compiler/BUILD.gn
++++ b/config/compiler/BUILD.gn
+@@ -192,9 +192,19 @@ declare_args() {
+ 
+ config("compiler") {
+   asmflags = []
+-  cflags = []
+-  cflags_c = []
+-  cflags_cc = []
++  cflags = [
++    "-Wno-error=macro-redefined",
++  ]
++  cflags_c = [
++    "-include",
++    "stdint.h",
++  ]
++  cflags_cc = [
++    "-include",
++    "stdint.h",
++    "-include",
++    "string",
++  ]
+   cflags_objc = []
+   cflags_objcc = []
+   ldflags = []
+@@ -693,7 +703,10 @@ config("compiler") {
+   # so only do so for posix platforms.
+   if (is_posix) {
+     asmflags += cflags
+-    asmflags += cflags_c
++
++    # Note: asmflags += cflags_c disabled to avoid injecting C-only
++    # preinclude flags (stdint.h) into assembly compilation.
++    # asmflags += cflags_c
+   }
+ }
+ 
+diff --git a/config/ohos/BUILD.gn b/config/ohos/BUILD.gn
+index 26b10a17..e59de7c2 100755
+--- a/config/ohos/BUILD.gn
++++ b/config/ohos/BUILD.gn
+@@ -77,7 +77,7 @@ config("runtime_library") {
+ 
+   # arm builds of libc++ starting in NDK r12 depend on unwind.
+   if (current_cpu == "arm" || current_cpu == "arm64" ||
+-      current_cpu == "riscv64") {
++      current_cpu == "riscv64" || current_cpu == "x86_64") {
+     libs += [ "unwind" ]
+   }
+ 
+diff --git a/ohos/app/app_internal.gni b/ohos/app/app_internal.gni
+index 6e75c883..52fe87c2 100644
+--- a/ohos/app/app_internal.gni
++++ b/ohos/app/app_internal.gni
+@@ -377,7 +377,7 @@ template("compile_js_assets") {
+         "//third_party/parse5:parse5_ark_hap",
+         "//third_party/weex-loader:weex_loader_ark_hap",
+       ]
+-      external_deps = [ "ace_ets2bundle:ets_loader_ark_hap" ]
++      deps += [ "//developtools/ace_ets2bundle:ets_loader_ark_hap" ]
+       _ace_loader_home =
+           get_label_info("//developtools/ace_js2bundle:ace_loader_node_modules",
+                          "target_out_dir") + "/ace_loader_ark"
+diff --git a/ohos/images/build_image.py b/ohos/images/build_image.py
+index d0ebca52..0ddb0f4d 100755
+--- a/ohos/images/build_image.py
++++ b/ohos/images/build_image.py
+@@ -41,6 +41,7 @@ def _prepare_root(system_path: str, target_cpu: str):
+     _dir_list = [
+         'config', 'dev', 'proc', 'sys', 'updater', 'system', 'vendor', 'data', 'chip_ckm',
+         'storage', 'mnt', 'tmp', 'sys_prod', 'chip_prod', 'module_update', 'eng_system', 'eng_chipset'
++        'run', 'var', 'opt', 'usr'
+     ]
+     for _dir_name in _dir_list:
+         os.makedirs(os.path.join(root_dir, _dir_name), exist_ok=True)
+@@ -48,7 +49,7 @@ def _prepare_root(system_path: str, target_cpu: str):
+     os.symlink('/system/bin/init', os.path.join(root_dir, 'init'))
+     os.symlink('/system/etc', os.path.join(root_dir, 'etc'))
+     os.symlink('/vendor', os.path.join(root_dir, 'chipset'))
+-    if target_cpu == 'arm64' or target_cpu == 'riscv64':
++    if target_cpu == 'arm64' or target_cpu == 'riscv64' or target_cpu == 'x86_64':
+         os.symlink('/system/lib64', os.path.join(root_dir, 'lib64'))
+     os.symlink('/system/lib', os.path.join(root_dir, 'lib'))
+ 
+diff --git a/ohos/images/mkimage/system_image_conf.txt b/ohos/images/mkimage/system_image_conf.txt
+index eb8e8fc7..38e2636e 100644
+--- a/ohos/images/mkimage/system_image_conf.txt
++++ b/ohos/images/mkimage/system_image_conf.txt
+@@ -1,5 +1,5 @@
+ /
+-2147483648
++4294967296
+ --fs_type=ext4
+ --dac_config ../../build/ohos/images/mkimage/dac.txt
+ --file_context obj/base/security/selinux_adapter/file_contexts.bin
+diff --git a/subsystem_config.json b/subsystem_config.json
+index 578ac460..b4353b93 100644
+--- a/subsystem_config.json
++++ b/subsystem_config.json
+@@ -222,6 +222,14 @@
+   "llvmproject": {
+     "path": "toolchain/llvm-project",
+     "name": "llvmproject"
++  },
++  "opc_soc_products": {
++    "path": "device/soc/opc",
++    "name": "opc_soc_products"
++  },
++  "opc_soc_products": {
++    "path": "device/soc/opc",
++    "name": "opc_soc_products"
+   },  
+   "sdk": {
+     "path": "interface",

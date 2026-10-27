@@ -1,0 +1,147 @@
+diff --git a/x86_general/config.json b/x86_general/config.json
+index c34098a..ad43eb1 100644
+--- a/x86_general/config.json
++++ b/x86_general/config.json
+@@ -12,7 +12,10 @@
+   "build_selinux": false,
+   "build_seccomp": false,
+   "device_stack_size": 8388608,
+-  "inherit": [ "productdefine/common/inherit/rich.json", "productdefine/common/inherit/chipset_common.json" ],
++  "inherit": [
++    "productdefine/common/inherit/rich.json",
++    "productdefine/common/inherit/chipset_common.json"
++  ],
+   "subsystems": [
+     {
+       "subsystem": "security",
+@@ -57,7 +60,7 @@
+         },
+         {
+           "component": "drivers_peripheral_ril",
+-          "features":[]
++          "features": []
+         },
+         {
+           "component": "drivers_interface_bluetooth",
+@@ -104,6 +107,9 @@
+             "hdf_core_platform_test_support = false",
+             "hdf_core_default_peripheral_config = false"
+           ]
++        },
++        {
++          "component": "drivers_tools"
+         }
+       ]
+     },
+@@ -119,13 +125,8 @@
+       ]
+     },
+     {
+-    "subsystem": "ai",
+-    "components": [
+-        {
+-          "component": "mindspore",
+-          "features": []
+-        }
+-      ]
++      "subsystem": "ai",
++      "components": []
+     },
+     {
+       "subsystem": "msdp",
+@@ -158,7 +159,7 @@
+             "wifi_feature_non_seperate_p2p = true",
+             "wifi_feature_non_hdf_driver = true",
+             "wifi_feature_p2p_random_mac_addr = false"
+-         ]
++          ]
+         }
+       ]
+     },
+@@ -248,6 +249,15 @@
+           "features": [
+             "musl_ld128_flag = false"
+           ]
++        },
++        {
++          "component": "typescript"
++        },
++        {
++          "component": "pcre2"
++        },
++        {
++          "component": "lzma"
+         }
+       ]
+     },
+@@ -294,11 +304,14 @@
+         {
+           "component": "vulkan-headers",
+           "features": []
++        },
++        {
++          "component": "graphic_utils_lite"
+         }
+       ]
+     },
+     {
+-      "subsystem":"hiviewdfx",
++      "subsystem": "hiviewdfx",
+       "components": [
+         {
+           "component": "hiview",
+@@ -329,6 +342,41 @@
+           ]
+         }
+       ]
++    },
++    {
++      "subsystem": "sdk",
++      "components": [
++        {
++          "component": "sdk"
++        }
++      ]
++    },
++    {
++      "subsystem": "developtools",
++      "components": [
++        {
++          "component": "ace_ets2bundle"
++        }
++      ]
++    },
++    {
++      "subsystem": "commonlibrary",
++      "components": [
++        {
++          "component": "rust_libc"
++        }
++      ]
++    },
++    {
++      "subsystem": "arkcompiler",
++      "components": [
++        {
++          "component": "runtime_core",
++          "features": [
++            "runtime_core_enable_codegen = false"
++          ]
++        }
++      ]
+     }
+   ]
+-}
++}
+\ No newline at end of file
+diff --git a/x86_general/image_conf/system_image_conf.txt b/x86_general/image_conf/system_image_conf.txt
+index e763cba..38e2636 100644
+--- a/x86_general/image_conf/system_image_conf.txt
++++ b/x86_general/image_conf/system_image_conf.txt
+@@ -1,5 +1,5 @@
+ /
+-2097152000
++4294967296
+ --fs_type=ext4
+ --dac_config ../../build/ohos/images/mkimage/dac.txt
+ --file_context obj/base/security/selinux_adapter/file_contexts.bin

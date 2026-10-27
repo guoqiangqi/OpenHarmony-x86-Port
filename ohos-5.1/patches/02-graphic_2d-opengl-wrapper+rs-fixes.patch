@@ -1,0 +1,458 @@
+diff --git a/frameworks/opengl_wrapper/src/EGL/egl_blob_cache.cpp b/frameworks/opengl_wrapper/src/EGL/egl_blob_cache.cpp
+index 9f6419b903..adfdfeb24c 100644
+--- a/frameworks/opengl_wrapper/src/EGL/egl_blob_cache.cpp
++++ b/frameworks/opengl_wrapper/src/EGL/egl_blob_cache.cpp
+@@ -94,6 +94,11 @@ int BlobCache::GetMapSize() const
+ 
+ void BlobCache::Init(EglWrapperDisplay* display)
+ {
++    (void)display;
++    // Blob cache fully disabled on this build: the disk replay path crashed
++    // sandboxed app processes (see ReadFromDisk), and the cache only speeds
++    // up shader reuse. Skip registering callbacks with the driver.
++    return;
+     if (!initStatus_) {
+         return;
+     }
+@@ -165,6 +170,9 @@ void BlobCache::SetBlob(const void *key, EGLsizeiANDROID keySize, const void *va
+         int count = 0;
+         while (count <= MAX_SHADER_DELETE) {
+             std::shared_ptr<Blob> deleteblob = tail_->prev_;
++            if (deleteblob == nullptr || deleteblob == head_) {
++                break; // list empty: head_->prev_ is nullptr, deref would crash
++            }
+             deleteblob->prev_->next_ = tail_;
+             tail_->prev_ = deleteblob->prev_;
+             mBlobMap_.erase(deleteblob);
+@@ -406,6 +414,10 @@ void BlobCache::BlobCacheReadFromDisk(const std::string filePath)
+ void BlobCache::ReadFromDisk()
+ {
+     readStatus_ = true;
++    // Disk blob cache disabled: this path only benefits GPU shader reuse and
++    // crashed SystemUI on x86 (empty-list deref in SetBlob LRU loop while
++    // replaying a corrupt/preset blob file). Softpipe recompiles shaders fine.
++    return;
+ #ifdef PRELOAD_BLOB_CACHE
+     BlobCacheReadFromDisk(PRESET_BLOB_CACHE_PATH);
+ #endif
+@@ -451,6 +463,12 @@ bool BlobCache::ValidFile(uint8_t *buf, size_t len)
+ 
+ void EglSetCacheDir(const std::string dir)
+ {
++    (void)dir;
++    // Blob cache entry point short-circuited: sandboxed app processes crashed
++    // inside the BlobCache construction/lookup chain (corrupted shared_ptr
++    // control block, unreliable unwind). Investigating; cache is unused on
++    // this softpipe build anyway.
++    return;
+     BlobCache::Get()->SetCacheDir(dir);
+ }
+ }
+\ No newline at end of file
+diff --git a/frameworks/opengl_wrapper/src/EGL/egl_wrapper_display.cpp b/frameworks/opengl_wrapper/src/EGL/egl_wrapper_display.cpp
+index baaf2ca33c..8f1d5c5509 100644
+--- a/frameworks/opengl_wrapper/src/EGL/egl_wrapper_display.cpp
++++ b/frameworks/opengl_wrapper/src/EGL/egl_wrapper_display.cpp
+@@ -102,6 +102,21 @@ EGLBoolean EglWrapperDisplay::Init(EGLint *major, EGLint *minor)
+         return EGL_TRUE;
+     }
+ 
++    // Force eglInitialize failure so RS/ArkUI clients take their CPU
++    // rendering fallback. On this virtio-gpu/swrast setup the GL write path
++    // into dumb-backed surfaces silently loses pixels (buffers are flushed
++    // empty), while the CPU path produces real content. Must be combined with
++    // the v4 loader stubs (HiLogPrint local stub + BlobCache short-circuits),
++    // otherwise the failure path itself crashes on the lazy-GOT bug.
++    if (access("/data/egl_no_init", F_OK) == 0) {
++        static bool forceReported = false;
++        if (!forceReported) {
++            WLOGE("FORCE-INIT-FAIL: eglInitialize disabled (marker /data/egl_no_init)");
++            forceReported = true;
++        }
++        return EGL_FALSE;
++    }
++
+     ThreadPrivateDataCtl::SetGlHookTable(&gGlHookNoContext);
+     EglWrapperDispatchTablePtr table = &gWrapperHook;
+     table->major = -1;
+diff --git a/frameworks/opengl_wrapper/src/EGL/egl_wrapper_entry.cpp b/frameworks/opengl_wrapper/src/EGL/egl_wrapper_entry.cpp
+index 3ab9c8cbf7..413f088d3e 100644
+--- a/frameworks/opengl_wrapper/src/EGL/egl_wrapper_entry.cpp
++++ b/frameworks/opengl_wrapper/src/EGL/egl_wrapper_entry.cpp
+@@ -300,7 +300,7 @@ EGLint EglGetErrorImpl(void)
+ static __eglMustCastToProperFunctionPointerType FindBuiltinWrapper(const char* procname)
+ {
+ #if (defined(__aarch64__) || defined(__x86_64__))
+-    static void* dlglv3Handle = dlopen("/system/lib64/libGLESv3.so", RTLD_NOW | RTLD_LOCAL);
++    static void* dlglv3Handle = dlopen("/system/lib64/platformsdk/libGLESv3.so", RTLD_NOW | RTLD_LOCAL);
+ #else
+     static void* dlglv3Handle = dlopen("/system/lib/platformsdk/libGLESv3.so", RTLD_NOW | RTLD_LOCAL);
+ #endif
+diff --git a/frameworks/opengl_wrapper/src/EGL/egl_wrapper_loader.cpp b/frameworks/opengl_wrapper/src/EGL/egl_wrapper_loader.cpp
+index a3f6ad7cc8..3277de87da 100644
+--- a/frameworks/opengl_wrapper/src/EGL/egl_wrapper_loader.cpp
++++ b/frameworks/opengl_wrapper/src/EGL/egl_wrapper_loader.cpp
+@@ -16,6 +16,12 @@
+ #include "egl_wrapper_loader.h"
+ 
+ #include <dlfcn.h>
++#include <fcntl.h>
++#include <stdarg.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/types.h>
++#include <unistd.h>
+ #include <string>
+ 
+ #include "directory_ex.h"
+@@ -24,6 +30,25 @@
+ #include "wrapper_log.h"
+ 
+ using namespace OHOS;
++
++// Fallback definition of the only hilog symbol referenced by this library.
++// In appspawn sandboxed processes libhilog.so can be loaded RTLD_LOCAL and
++// invisible when this library is relocated, so the HiLogPrint JUMP_SLOT is
++// deferred by the lazy path and keeps its link-time value; the first call
++// then jumps to an unmapped address and crashes the process. A local strong
++// symbol keeps the call in-process. Kept minimal on purpose: hilog-style
++// "%{public}s" format strings are not safe to feed to plain vsnprintf.
++extern "C" int HiLogPrint(LogType type, LogLevel level, unsigned int domain,
++    const char *tag, const char *fmt, ...)
++{
++    (void)type;
++    (void)level;
++    (void)domain;
++    (void)tag;
++    (void)fmt;
++    return 0;
++}
++
+ namespace OHOS {
+ namespace {
+ #if (defined(__aarch64__) || defined(__x86_64__))
+@@ -80,7 +105,10 @@ bool EglWrapperLoader::LoadEgl(const char* libName, EglHookTable* table)
+     GetProcAddressType getProcAddr =
+         (GetProcAddressType)dlsym(dlEglHandle_, "eglGetProcAddress");
+     if (getProcAddr == nullptr) {
+-        WLOGE("can't find eglGetProcAddress() in EGL driver library.");
++        const char *dlErr = dlerror();
++        WLOGE("can't find eglGetProcAddress() in EGL driver library. handle=%{public}p "
++            "dlerror=%{public}s realPath=%{public}s", dlEglHandle_, dlErr ? dlErr : "(null)",
++            realPath.c_str());
+         return false;
+     }
+ 
+diff --git a/graphic.cfg b/graphic.cfg
+index 15ed67ca09..b99cc921dd 100644
+--- a/graphic.cfg
++++ b/graphic.cfg
+@@ -10,14 +10,12 @@
+                 "mkdir /data/local 0751 root root",
+                 "mkdir /data/local/shader_cache 0711 root root",
+                 "mkdir /data/local/shader_cache/local 0711 root root",
+-                "mkdir /data/local/shader_cache/local/system 0771 system system"
++                "mkdir /data/local/shader_cache/local/system 0771 system system",
++                "export LIBGL_DRIVERS_PATH /system/lib64/dri"
+             ]
+         }, {
+             "name": "services:restartrender_service",
+             "cmds": [
+-                "reset foundation",
+-                "reset allocator_host",
+-                "reset composer_host"
+             ]
+         }
+     ],
+@@ -27,6 +25,12 @@
+             "env" : [{
+                 "name" : "LD_PRELOAD",
+                 "value" : "/system/lib64/libdfmalloc.z.so"
++            }, {
++                "name" : "LIBGL_ALWAYS_SOFTWARE",
++                "value" : "1"
++            }, {
++                "name" : "LIBGL_DRIVERS_PATH",
++                "value" : "/system/lib64/dri"
+             }],
+             "critical" : [1, 5, 60],
+             "importance" : -20,
+diff --git a/rosen/modules/2d_graphics/src/render_context/render_context.cpp b/rosen/modules/2d_graphics/src/render_context/render_context.cpp
+index 428d465f3f..90c2274152 100644
+--- a/rosen/modules/2d_graphics/src/render_context/render_context.cpp
++++ b/rosen/modules/2d_graphics/src/render_context/render_context.cpp
+@@ -15,6 +15,7 @@
+ 
+ #include "render_context.h"
+ 
++#include <cstdint>
+ #include <sstream>
+ #include <string>
+ 
+@@ -38,7 +39,7 @@ namespace Rosen {
+ using GetPlatformDisplayExt = PFNEGLGETPLATFORMDISPLAYEXTPROC;
+ constexpr const char* EGL_EXT_PLATFORM_WAYLAND = "EGL_EXT_platform_wayland";
+ constexpr const char* EGL_KHR_PLATFORM_WAYLAND = "EGL_KHR_platform_wayland";
+-constexpr int32_t EGL_CONTEXT_CLIENT_VERSION_NUM = 2;
++constexpr int32_t EGL_CONTEXT_CLIENT_VERSION_NUM = 3;
+ constexpr char CHARACTER_WHITESPACE = ' ';
+ constexpr const char* CHARACTER_STRING_WHITESPACE = " ";
+ constexpr const char* EGL_GET_PLATFORM_DISPLAY_EXT = "eglGetPlatformDisplayEXT";
+@@ -134,10 +135,16 @@ RenderContext::~RenderContext()
+ void RenderContext::CreatePbufferSurface()
+ {
+     const char* extensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+-
+-    if ((extensions != nullptr) &&
+-       (!CheckEglExtension(extensions, EGL_KHR_SURFACELESS_CONTEXT)) &&
+-       (pbufferSurface_ == EGL_NO_SURFACE)) {
++    // The OHOS EGL wrapper only accepts its singleton display handle, so
++    // eglQueryString(EGL_NO_DISPLAY, ...) returns nullptr. That previously made this
++    // function skip pbuffer creation entirely, leaving eglMakeCurrent() surfaceless.
++    // Surfaceless contexts are not reliably supported by every driver (with kms_swrast
++    // glGetString() returns nullptr and GrGLCreateNativeInterface() then fails), so create
++    // the pbuffer unless surfaceless support is explicitly advertised.
++    bool surfacelessSupported = (extensions != nullptr) &&
++        CheckEglExtension(extensions, EGL_KHR_SURFACELESS_CONTEXT);
++
++    if (!surfacelessSupported && (pbufferSurface_ == EGL_NO_SURFACE)) {
+         EGLint attribs[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+         pbufferSurface_ = eglCreatePbufferSurface(eglDisplay_, config_, attribs);
+         if (pbufferSurface_ == EGL_NO_SURFACE) {
+@@ -173,7 +180,13 @@ void RenderContext::InitializeEglContext()
+ 
+     unsigned int ret;
+     EGLint count;
+-    EGLint config_attribs[] = { EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
++    // Ask for both window and pbuffer surface support: the pbuffer created in
++    // CreatePbufferSurface() must match the config's EGL_SURFACE_TYPE, otherwise
++    // eglCreatePbufferSurface() fails with EGL_BAD_MATCH and the context ends up
++    // surfaceless (where swrast glGetString() returns null and skia cannot build
++    // its GL interface).
++    EGLint config_attribs[] = { EGL_SURFACE_TYPE, EGL_WINDOW_BIT | EGL_PBUFFER_BIT,
++        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
+         EGL_ALPHA_SIZE, 8, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL_NONE };
+ 
+     ret = eglChooseConfig(eglDisplay_, config_attribs, &config_, 1, &count);
+@@ -288,20 +301,31 @@ bool RenderContext::SetUpGpuContext(std::shared_ptr<Drawing::GPUContext> drawing
+     }
+ #ifdef RS_ENABLE_GL
+     if (RSSystemProperties::GetGpuApiType() == GpuApiType::OPENGL) {
++        // Guard: GL entry points are only valid after EGL context is made current.
++        // Calling glGetString() with a half-initialized EGL (e.g. DRI device not
++        // ready during early boot) returns error sentinels such as (char*)-1
++        // instead of a valid version string, which crashed strlen() below.
++        if (!IsEglContextReady()) {
++            LOGE("EGL context is not ready, skip SetUpGpuContext");
++            return false;
++        }
+         mHandler_ = std::make_shared<MemoryHandler>();
+         auto glesVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+         if (isUniRenderMode_) {
+             cacheDir_ = UNIRENDER_CACHE_DIR;
+         }
+         Drawing::GPUContextOptions options;
+-        if (glesVersion != nullptr) {
+-            auto size = glesVersion ? strlen(glesVersion) : 0;
++        if (glesVersion != nullptr && reinterpret_cast<uintptr_t>(glesVersion) != UINTPTR_MAX) {
++            auto size = strlen(glesVersion);
+             mHandler_->ConfigureContext(&options, glesVersion, size, cacheDir_, isUniRenderMode_);
+         }
+ 
+         auto drGPUContext = std::make_shared<Drawing::GPUContext>();
+         if (!drGPUContext->BuildFromGL(options)) {
+-            LOGE("SetUpGrContext drGPUContext is null");
++            auto rendererStr = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
++            LOGE("SetUpGrContext drGPUContext is null, GL_VERSION=%{public}s GL_RENDERER=%{public}s "
++                "pbuffer=%{public}d", glesVersion ? glesVersion : "(null)",
++                rendererStr ? rendererStr : "(null)", pbufferSurface_ != EGL_NO_SURFACE);
+             return false;
+         }
+         drGPUContext_ = std::move(drGPUContext);
+diff --git a/rosen/modules/create_pixelmap_surface/BUILD.gn b/rosen/modules/create_pixelmap_surface/BUILD.gn
+index 6fba93cb5b..cae6b983e7 100644
+--- a/rosen/modules/create_pixelmap_surface/BUILD.gn
++++ b/rosen/modules/create_pixelmap_surface/BUILD.gn
+@@ -53,6 +53,8 @@ ohos_source_set("create_pixelmap_surface_src") {
+     external_deps += [ "video_processing_engine:videoprocessingengine" ]
+   }
+ 
++  external_deps += [ "hilog:libhilog" ]
++
+   subsystem_name = "graphic"
+   part_name = "graphic_2d"
+ }
+diff --git a/rosen/modules/render_service/core/feature/capture/rs_surface_capture_task.cpp b/rosen/modules/render_service/core/feature/capture/rs_surface_capture_task.cpp
+index 272cb6e892..b9292fd5bf 100644
+--- a/rosen/modules/render_service/core/feature/capture/rs_surface_capture_task.cpp
++++ b/rosen/modules/render_service/core/feature/capture/rs_surface_capture_task.cpp
+@@ -261,12 +261,22 @@ std::shared_ptr<Drawing::Surface> RSSurfaceCaptureTask::CreateSurface(
+ #if (defined RS_ENABLE_GL) && (defined RS_ENABLE_EGLIMAGE)
+     if (RSSystemProperties::GetGpuApiType() == GpuApiType::OPENGL) {
+         auto renderContext = RSMainThread::Instance()->GetRenderEngine()->GetRenderContext();
+-        if (renderContext == nullptr) {
+-            RS_LOGE("RSSurfaceCaptureTask::CreateSurface: renderContext is nullptr");
+-            return nullptr;
++        Drawing::GPUContext* grContext = nullptr;
++        if (renderContext != nullptr) {
++            renderContext->SetUpGpuContext(nullptr);
++            grContext = renderContext->GetDrGPUContext();
+         }
+-        renderContext->SetUpGpuContext(nullptr);
+-        return Drawing::Surface::MakeRenderTarget(renderContext->GetDrGPUContext(), false, info);
++        if (grContext != nullptr) {
++            auto glSurface = Drawing::Surface::MakeRenderTarget(grContext, false, info);
++            if (glSurface != nullptr) {
++                return glSurface;
++            }
++        }
++        // Fallback: in software rendering environments (softpipe/swrast), the GL
++        // render target may be unavailable during capture. Draw directly into the
++        // pixelmap memory instead, which works reliably without a GPU context.
++        RS_LOGW("RSSurfaceCaptureTask::CreateSurface: GL render target unavailable, fallback to raster surface");
++        return Drawing::Surface::MakeRasterDirect(info, address, pixelmap->GetRowBytes());
+     }
+ #endif
+ #ifdef RS_ENABLE_VK
+@@ -352,15 +362,20 @@ void RSSurfaceCaptureVisitor::CaptureSingleSurfaceNodeWithoutUni(RSSurfaceRender
+         canvas_->RestoreToCount(saveCnt);
+         if (node.GetRSSurfaceHandler()->GetBuffer() != nullptr) {
+             // in node's local coordinate.
+-            auto params = RSDividedRenderUtil::CreateBufferDrawParam(node, true, false, false, false);
++            // forceCPU: on this software-rendered platform (mesa swrast) sampling a
++            // producer buffer through the EGLImage -> GL_TEXTURE_EXTERNAL_OES path
++            // yields an empty texture, so the GPU path silently draws black. The CPU
++            // path copies the buffer contents directly (same access the drm composer
++            // uses) and is the only reliable way to capture real pixels here.
++            auto params = RSDividedRenderUtil::CreateBufferDrawParam(node, true, false, true, false);
+             renderEngine_->DrawSurfaceNodeWithParams(*canvas_, node, params);
+         }
+     } else {
+         Drawing::AutoCanvasRestore acr(*canvas_.get(), true);
+         canvas_->ConcatMatrix(translateMatrix);
+         if (node.GetRSSurfaceHandler()->GetBuffer() != nullptr) {
+-            // in node's local coordinate.
+-            auto params = RSDividedRenderUtil::CreateBufferDrawParam(node, true, false, false, false);
++            // in node's local coordinate. (forceCPU: see comment above)
++            auto params = RSDividedRenderUtil::CreateBufferDrawParam(node, true, false, true, false);
+             renderEngine_->DrawSurfaceNodeWithParams(*canvas_, node, params);
+         }
+     }
+@@ -377,8 +392,9 @@ void RSSurfaceCaptureVisitor::CaptureSurfaceInDisplayWithoutUni(RSSurfaceRenderN
+     }
+     ProcessChildren(node);
+     if (node.GetRSSurfaceHandler()->GetBuffer() != nullptr) {
+-        // in display's coordinate.
+-        auto params = RSDividedRenderUtil::CreateBufferDrawParam(node, false, false, false, false);
++        // display's coordinate. (forceCPU: swrast EGLImage OES sampling is black,
++        // see comment in CaptureSingleSurfaceNodeWithoutUni)
++        auto params = RSDividedRenderUtil::CreateBufferDrawParam(node, false, false, true, false);
+         renderEngine_->DrawSurfaceNodeWithParams(*canvas_, node, params);
+     }
+ }
+diff --git a/rosen/modules/render_service/core/feature/capture/rs_surface_capture_task_parallel.cpp b/rosen/modules/render_service/core/feature/capture/rs_surface_capture_task_parallel.cpp
+index add3638588..184a556f30 100644
+--- a/rosen/modules/render_service/core/feature/capture/rs_surface_capture_task_parallel.cpp
++++ b/rosen/modules/render_service/core/feature/capture/rs_surface_capture_task_parallel.cpp
+@@ -395,23 +395,32 @@ std::shared_ptr<Drawing::Surface> RSSurfaceCaptureTaskParallel::CreateSurface(
+ 
+ #if (defined(RS_ENABLE_GL) && defined(RS_ENABLE_EGLIMAGE))
+     if (RSSystemProperties::GetGpuApiType() == GpuApiType::OPENGL) {
++        Drawing::GPUContext* grContext = nullptr;
+         auto renderEngine = RSUniRenderThread::Instance().GetRenderEngine();
+-        if (renderEngine == nullptr) {
+-            RS_LOGE("RSSurfaceCaptureTaskParallel::CreateSurface: renderEngine is nullptr");
+-            return nullptr;
+-        }
++        if (renderEngine != nullptr) {
+ #if (defined(RS_ENABLE_GPU) && (defined(NEW_RENDER_CONTEXT) || \
+     defined(RS_ENABLE_GL) || defined(RS_ENABLE_VK)))
+-        auto renderContext = renderEngine->GetRenderContext();
++            auto renderContext = renderEngine->GetRenderContext();
+ #else
+-        auto renderContext = nullptr;
++            auto renderContext = nullptr;
+ #endif
+-        if (renderContext == nullptr) {
+-            RS_LOGE("RSSurfaceCaptureTaskParallel::CreateSurface: renderContext is nullptr");
+-            return nullptr;
++            if (renderContext != nullptr) {
++                renderContext->SetUpGpuContext(nullptr);
++                grContext = renderContext->GetDrGPUContext();
++            }
++        }
++        if (grContext != nullptr) {
++            auto glSurface = Drawing::Surface::MakeRenderTarget(grContext, false, info);
++            if (glSurface != nullptr) {
++                return glSurface;
++            }
+         }
+-        renderContext->SetUpGpuContext(nullptr);
+-        return Drawing::Surface::MakeRenderTarget(renderContext->GetDrGPUContext(), false, info);
++        // Fallback: in software rendering environments (softpipe/swrast), the GL
++        // render target may be unavailable during capture. Draw directly into the
++        // pixelmap memory instead, which works reliably without a GPU context.
++        RS_LOGW("RSSurfaceCaptureTaskParallel::CreateSurface: GL render target unavailable, "
++            "fallback to raster surface");
++        return Drawing::Surface::MakeRasterDirect(info, address, pixelmap->GetRowBytes());
+     }
+ #endif
+ #ifdef RS_ENABLE_VK
+diff --git a/rosen/modules/render_service/core/pipeline/main_thread/rs_main_thread.cpp b/rosen/modules/render_service/core/pipeline/main_thread/rs_main_thread.cpp
+index 8a62c0e457..a7021738b3 100644
+--- a/rosen/modules/render_service/core/pipeline/main_thread/rs_main_thread.cpp
++++ b/rosen/modules/render_service/core/pipeline/main_thread/rs_main_thread.cpp
+@@ -3635,11 +3635,12 @@ void RSMainThread::RemoveTask(const std::string& name)
+     }
+ }
+ 
+-void RSMainThread::PostSyncTask(RSTaskMessage::RSTask task)
++bool RSMainThread::PostSyncTask(RSTaskMessage::RSTask task)
+ {
+     if (handler_) {
+-        handler_->PostSyncTask(task, AppExecFwk::EventQueue::Priority::IMMEDIATE);
++        return handler_->PostSyncTask(task, AppExecFwk::EventQueue::Priority::IMMEDIATE);
+     }
++    return false;
+ }
+ 
+ bool RSMainThread::IsIdle() const
+diff --git a/rosen/modules/render_service/core/pipeline/main_thread/rs_main_thread.h b/rosen/modules/render_service/core/pipeline/main_thread/rs_main_thread.h
+index 97ba1b328a..9d5b5b7ac2 100644
+--- a/rosen/modules/render_service/core/pipeline/main_thread/rs_main_thread.h
++++ b/rosen/modules/render_service/core/pipeline/main_thread/rs_main_thread.h
+@@ -105,7 +105,10 @@ public:
+     void PostTask(RSTaskMessage::RSTask task, const std::string& name, int64_t delayTime,
+         AppExecFwk::EventQueue::Priority priority = AppExecFwk::EventQueue::Priority::IDLE);
+     void RemoveTask(const std::string& name);
+-    void PostSyncTask(RSTaskMessage::RSTask task);
++    // Returns false when the event runner is not running yet (e.g. during boot,
++    // before RSRenderService::Run()); the sync task is dropped in that case, so
++    // callers must check the result instead of assuming registration happened.
++    bool PostSyncTask(RSTaskMessage::RSTask task);
+     bool IsIdle() const;
+     void TransactionDataMapDump(const TransactionDataMap& transactionDataMap, std::string& dumpString);
+     void RenderServiceTreeDump(std::string& dumpString, bool forceDumpSingleFrame = true,
+diff --git a/rosen/modules/render_service/core/pipeline/main_thread/rs_render_service_connection.cpp b/rosen/modules/render_service/core/pipeline/main_thread/rs_render_service_connection.cpp
+index cdf86c0c57..9d452ab806 100644
+--- a/rosen/modules/render_service/core/pipeline/main_thread/rs_render_service_connection.cpp
++++ b/rosen/modules/render_service/core/pipeline/main_thread/rs_render_service_connection.cpp
+@@ -415,7 +415,17 @@ ErrCode RSRenderServiceConnection::CreateNode(const RSDisplayNodeConfig& display
+         }
+         node->SetMirrorSource(mirrorSourceNode);
+     };
+-    mainThread_->PostSyncTask(registerNode);
++    // PostSyncTask returns false (and drops the task) while the main-thread event
++    // runner is not running yet, which happens during early boot when this SA is
++    // already registered but RSRenderService::Run() has not started the loop.
++    // Reporting success in that window would leave the node unregistered forever
++    // ("node is nullptr" on TakeSurfaceCapture), so propagate the failure to let
++    // the DM-side retry cover the window.
++    if (!mainThread_->PostSyncTask(registerNode)) {
++        RS_LOGE("RSRenderService::CreateDisplayNode PostSyncTask failed, runner not running");
++        success = false;
++        return ERR_INVALID_VALUE;
++    }
+     success = true;
+     return ERR_OK;
+ }

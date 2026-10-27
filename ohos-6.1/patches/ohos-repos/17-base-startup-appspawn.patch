@@ -1,0 +1,44 @@
+diff --git a/modules/common/BUILD.gn b/modules/common/BUILD.gn
+index 1fd1e44c..fabbc500 100644
+--- a/modules/common/BUILD.gn
++++ b/modules/common/BUILD.gn
+@@ -40,6 +40,10 @@ ohos_shared_library("appspawn_common") {
+     ".",
+     "${appspawn_path}/common",
+     "${appspawn_path}/standard",
++    # HapDomainInfo (hap_restorecon.h) is used unconditionally by the 6.1
++    # SetHapDomainInfo flow even when selinux is disabled
++    "//base/security/selinux_adapter/interfaces/policycoreutils/include",
++    "//third_party/selinux/libselinux/include",
+   ]
+   cflags = []
+   deps = [
+diff --git a/modules/common/appspawn_adapter.cpp b/modules/common/appspawn_adapter.cpp
+index aa5504c8..333d2dde 100644
+--- a/modules/common/appspawn_adapter.cpp
++++ b/modules/common/appspawn_adapter.cpp
+@@ -24,8 +24,10 @@
+ #include "tokenid_kit.h"
+ #include "securec.h"
+ 
+-#ifdef WITH_SELINUX
++// 6.1 uses HapDomainInfo unconditionally (SetHapDomainInfo flow), so the
++// hap_restorecon.h include must not be guarded by WITH_SELINUX.
+ #include "hap_restorecon.h"
++#ifdef WITH_SELINUX
+ #include "selinux/selinux.h"
+ #endif
+ #ifdef WITH_SECCOMP
+@@ -278,7 +280,12 @@ int32_t SetEnvInfo(const AppSpawnMgr *content, const AppSpawningCtx *property)
+ 
+ int LoadSeLinuxConfig(void)
+ {
++#ifdef WITH_SELINUX
+     return HapContextLoadConfig();
++#else
++    // selinux disabled on this product: nothing to load
++    return 0;
++#endif
+ }
+ 
+ uint32_t GetHostId(const AppSpawningCtx *property)

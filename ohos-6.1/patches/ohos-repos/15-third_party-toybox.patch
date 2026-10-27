@@ -1,0 +1,13 @@
+diff --git a/toys/pending/mdev.c b/toys/pending/mdev.c
+index eb44d9d..3685d95 100644
+--- a/toys/pending/mdev.c
++++ b/toys/pending/mdev.c
+@@ -234,7 +234,7 @@ found_device:
+     else
+       sprintf(toybuf, "/dev/%s", device_name);
+ 
+-      if ((temp=getenv("ACTION")) && !strcmp(temp, "remove")) {
++    if ((temp=getenv("ACTION")) && !strcmp(temp, "remove")) {
+         unlink(toybuf);
+         return;
+       }

@@ -1,0 +1,1020 @@
+diff --git a/tools/deps_guard/rules/ChipsetSDK/chipsetsdk_info.json b/tools/deps_guard/rules/ChipsetSDK/chipsetsdk_info.json
+index 2c2a3b4..061d111 100644
+--- a/tools/deps_guard/rules/ChipsetSDK/chipsetsdk_info.json
++++ b/tools/deps_guard/rules/ChipsetSDK/chipsetsdk_info.json
+@@ -35,6 +35,30 @@
+         "path": "//base/security/access_token/interfaces/innerkits/accesstoken:libaccesstoken_sdk",
+         "headers": []
+     },
++    {
++        "name": "build_framework:musl-libc.so",
++        "so_file_name": "ld-musl-x86_64.so.1",
++        "path": "//build/common/musl:musl-libc.so",
++        "headers": []
++    },
++    {
++        "name": "libdrm:libdrm_radeon",
++        "so_file_name": "libdrm_radeon.so",
++        "path": "//device/soc/opc/x86_general/hardware/gpu/third_party/libdrm:ibdrm_radeon.so",
++        "headers": []
++    },
++    {
++        "name": "libdrm:libdrm_amdgpu",
++        "so_file_name": "libdrm_amdgpu.so",
++        "path": "//device/soc/opc/x86_general/hardware/gpu/third_party/libdrm:libdrm_amdgpu.so",
++        "headers": []
++    },
++    {
++        "name": "libelf:libelf",
++        "so_file_name": "libelf.so",
++        "path": "//device/soc/opc/x86_general/hardware/gpu/third_party/elfutils:libelf.so",
++        "headers": []
++    },
+     {
+         "name": "hdf:libsensor_proxy_3.0",
+         "so_file_name": "libsensor_proxy_3.0.z.so",
+diff --git a/tools/deps_guard/rules/chipsetsdk_dep_whitelist.json b/tools/deps_guard/rules/chipsetsdk_dep_whitelist.json
+index 13306b3..8c979de 100644
+--- a/tools/deps_guard/rules/chipsetsdk_dep_whitelist.json
++++ b/tools/deps_guard/rules/chipsetsdk_dep_whitelist.json
+@@ -670,7 +670,7 @@
+         "dep_file_name": "ld-musl-arm.so.1",
+         "dep_file_path": "system/lib/ld-musl-arm.so.1",
+         "description": "vendor only lib libcamera_stub_1.5.z.so deps wrong lib ld-musl-arm.so.1 in system/lib/ld-musl-arm.so.1"
+-    },    
++    },
+     {
+         "so_file_name": "libhdi_light.z.so",
+         "so_file_path": "vendor/lib/libhdi_light.z.so",
+@@ -5206,7 +5206,8 @@
+         "dep_file_name": "libutils.z.so",
+         "dep_file_path": "system/lib/module/arkts/libutils.z.so",
+         "description": "lib libcodec_component_manager_service_4.0.z.so with innerapi_tags [passthrough] cannot depend system only lib libutils.z.so in system/lib/module/arkts/libutils.z.so"
+-    },{
++    },
++    {
+         "so_file_name": "libextractortool.z.so",
+         "so_file_path": "system/lib/chipset-sdk/libextractortool.z.so",
+         "dep_file_name": "libutils.z.so",
+@@ -10527,11 +10528,11 @@
+         "description": "libalsa_midi.so with innerapi_tags [passthrough_indirect] cannot depend system only file ld-musl-arm.so.1 with //build/common/musl:ld-musl-arm.so.1"
+     },
+     {
+- 	   	"so_file_name": "libEGL.so",
+- 	   	"so_file_path": "system/lib/platformsdk/libEGL.so",
+- 	    "dep_file_name": "libmali-bifrost-g52-g7p0-ohos.so",
+- 	   	"dep_file_path": "vendor/lib/chipsetsdk/libmali-bifrost-g52-g7p0-ohos.so",
+- 	    "description": "system_only cannot depend system only lib libmali-bifrost-g52-g7p0-ohos.so in vendor/lib/chipsetsdk/libmali-bifrost-g52-g7p0-ohos.so"
++        "so_file_name": "libEGL.so",
++        "so_file_path": "system/lib/platformsdk/libEGL.so",
++        "dep_file_name": "libmali-bifrost-g52-g7p0-ohos.so",
++        "dep_file_path": "vendor/lib/chipsetsdk/libmali-bifrost-g52-g7p0-ohos.so",
++        "description": "system_only cannot depend system only lib libmali-bifrost-g52-g7p0-ohos.so in vendor/lib/chipsetsdk/libmali-bifrost-g52-g7p0-ohos.so"
+     },
+     {
+         "so_file_name": "libusb_adapter.z.so",
+@@ -10567,5 +10568,929 @@
+         "dep_file_name": "ld-musl-arm-asan.so.1",
+         "dep_file_path": "system/lib/ld-musl-arm-asan.so.1",
+         "description": "lib libOMX_Core.z.so with innerapi_tags [passthrough_indirect] cannot deps system only lib ld-musl-arm-asan.so.1 in system/lib/ld-musl-arm-asan.so.1"
++    },
++    {
++        "so_file_name": "libxperfservice_client.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libxperfservice_client.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libxperfservice_client.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libutils.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libutils.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libutils.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libunwind.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libunwind.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libunwind.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_vendor.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_vendor.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_vendor.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_hdi_impl_v1_1.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_hdi_impl_v1_1.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_hdi_impl_v1_1.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libmapper_service_1.2.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libmapper_service_1.2.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libmapper_service_1.2.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libpower_proxy_1.3.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libpower_proxy_1.3.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libpower_proxy_1.3.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libsamgr_proxy.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libsamgr_proxy.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libsamgr_proxy.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libpower_proxy_1.2.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libpower_proxy_1.2.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libpower_proxy_1.2.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_hdi_impl.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_hdi_impl.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_hdi_impl.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libclang_rt.ubsan_minimal.so",
++        "so_file_path": "system/lib/chipset-sdk/libclang_rt.ubsan_minimal.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libclang_rt.ubsan_minimal.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libbuffer_handle.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libbuffer_handle.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libbuffer_handle.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhdf_host.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhdf_host.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhdf_host.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libshared_libz.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libshared_libz.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libshared_libz.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_hdi_impl_v1_4.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_hdi_impl_v1_4.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_hdi_impl_v1_4.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libpng.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libpng.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libpng.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libaudio_bluetooth_hdi_proxy_server.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libaudio_bluetooth_hdi_proxy_server.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libaudio_bluetooth_hdi_proxy_server.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libbegetutil.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libbegetutil.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libbegetutil.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libohosffmpeg.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libohosffmpeg.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libohosffmpeg.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libusb_proxy_2.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libusb_proxy_2.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libusb_proxy_2.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhdi_base.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhdi_base.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhdi_base.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhdifd_parcelable.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhdifd_parcelable.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhdifd_parcelable.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libpulsecommon.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libpulsecommon.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libpulsecommon.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libbuffer_producer_sequenceable_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libbuffer_producer_sequenceable_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libbuffer_producer_sequenceable_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_hdi_impl_v1_3.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_hdi_impl_v1_3.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_hdi_impl_v1_3.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libaccesstoken_sdk.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libaccesstoken_sdk.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libaccesstoken_sdk.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_hdi_impl_v1_2.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_hdi_impl_v1_2.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_hdi_impl_v1_2.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhisysevent.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhisysevent.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhisysevent.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libsocperf_client.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libsocperf_client.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libsocperf_client.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libmap_data_sequenceable_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libmap_data_sequenceable_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libmap_data_sequenceable_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libmapper_service_1.3.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libmapper_service_1.3.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libmapper_service_1.3.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libssl_openssl.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libssl_openssl.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libssl_openssl.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libusb_shared.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libusb_shared.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libusb_shared.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libffrt.so",
++        "so_file_path": "system/lib/chipset-sdk/libffrt.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libffrt.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_vdi_impl.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_vdi_impl.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_vdi_impl.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libcjson.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libcjson.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libcjson.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libpulse.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libpulse.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libpulse.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libcert_manager_sdk.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libcert_manager_sdk.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libcert_manager_sdk.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libusbfn_mtp_interface_service_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libusbfn_mtp_interface_service_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libusbfn_mtp_interface_service_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libusb_host_interface_service_2.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libusb_host_interface_service_2.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libusb_host_interface_service_2.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libmetadata_service_1.1.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libmetadata_service_1.1.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libmetadata_service_1.1.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhilog.so",
++        "so_file_path": "system/lib/chipset-sdk/libhilog.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhilog.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhdf_ipc_adapter.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhdf_ipc_adapter.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhdf_ipc_adapter.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libjsoncpp.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libjsoncpp.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libjsoncpp.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libbtcommon.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libbtcommon.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libbtcommon.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libbuffer_handle_sequenceable_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libbuffer_handle_sequenceable_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libbuffer_handle_sequenceable_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libsec_shared.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libsec_shared.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libsec_shared.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libmidi_interface_service_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libmidi_interface_service_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libmidi_interface_service_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhitrace_meter.so",
++        "so_file_path": "system/lib/chipset-sdk/libhitrace_meter.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhitrace_meter.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libmbedtls.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libmbedtls.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libmbedtls.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhdf_utils.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhdf_utils.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhdf_utils.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libc++.so",
++        "so_file_path": "system/lib/chipset-sdk/libc++.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libc++.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libpulsecore.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libpulsecore.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libpulsecore.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libconfigpolicy_util.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libconfigpolicy_util.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libconfigpolicy_util.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libylong_runtime.dylib.so",
++        "so_file_path": "system/lib/chipset-sdk/libylong_runtime.dylib.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libylong_runtime.dylib.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libsensor_proxy_3.1.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libsensor_proxy_3.1.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libsensor_proxy_3.1.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libxml2.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libxml2.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libxml2.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libmapper_service_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libmapper_service_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libmapper_service_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libservice_checker.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libservice_checker.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libservice_checker.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhukschipsetsdk.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhukschipsetsdk.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhukschipsetsdk.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhicollie.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhicollie.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhicollie.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libmetadata.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libmetadata.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libmetadata.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libexif.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libexif.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libexif.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libmemory_tracker_interface_service_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libmemory_tracker_interface_service_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libmemory_tracker_interface_service_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libinput_interfaces_service_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libinput_interfaces_service_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libinput_interfaces_service_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libaccesstoken_compat_sdk.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libaccesstoken_compat_sdk.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libaccesstoken_compat_sdk.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libffrt_profiler.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libffrt_profiler.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libffrt_profiler.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libprotobuf_lite.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libprotobuf_lite.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libprotobuf_lite.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdmabufheap.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdmabufheap.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdmabufheap.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libbacktrace_local.so",
++        "so_file_path": "system/lib/chipset-sdk/libbacktrace_local.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libbacktrace_local.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libcrypto_openssl.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libcrypto_openssl.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libcrypto_openssl.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhitracechain.so",
++        "so_file_path": "system/lib/chipset-sdk/libhitracechain.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhitracechain.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libsensor_convert_interfaces_service_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libsensor_convert_interfaces_service_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libsensor_convert_interfaces_service_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libcurl_shared.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libcurl_shared.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libcurl_shared.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libsurface.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libsurface.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libsurface.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libc++_shared.so",
++        "so_file_path": "system/lib/chipset-sdk/libc++_shared.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libc++_shared.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhdi.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhdi.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhdi.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdrm.so",
++        "so_file_path": "system/lib/chipset-sdk/libdrm.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdrm.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libclang_rt.ubsan_standalone.so",
++        "so_file_path": "system/lib/chipset-sdk/libclang_rt.ubsan_standalone.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libclang_rt.ubsan_standalone.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libaudio_proxy_6.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libaudio_proxy_6.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libaudio_proxy_6.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libsystemparam.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libsystemparam.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libsystemparam.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libsensor_convert_proxy_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libsensor_convert_proxy_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libsensor_convert_proxy_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libpub_utils.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libpub_utils.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libpub_utils.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libcodec_component_manager_service_4.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libcodec_component_manager_service_4.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libcodec_component_manager_service_4.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libsensor_proxy_3.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libsensor_proxy_3.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libsensor_proxy_3.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libpower_proxy_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libpower_proxy_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libpower_proxy_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libturbojpeg.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libturbojpeg.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libturbojpeg.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libbeget_proxy.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libbeget_proxy.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libbeget_proxy.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libnl_share.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libnl_share.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libnl_share.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhukssdk.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhukssdk.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhukssdk.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libaccesstoken_common_cxx.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libaccesstoken_common_cxx.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libaccesstoken_common_cxx.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libaccesstoken_communication_adapter_cxx.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libaccesstoken_communication_adapter_cxx.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libaccesstoken_communication_adapter_cxx.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libalsa_midi.so",
++        "so_file_path": "system/lib/chipset-sdk/libalsa_midi.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libalsa_midi.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libasync_stack.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libasync_stack.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libasync_stack.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libbrotli_shared.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libbrotli_shared.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libbrotli_shared.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libcamera_vendor_tag_proxy_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libcamera_vendor_tag_proxy_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libcamera_vendor_tag_proxy_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libcrash_exception.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libcrash_exception.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libcrash_exception.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdfx_dumpcatcher.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdfx_dumpcatcher.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdfx_dumpcatcher.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdfx_procinfo.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdfx_procinfo.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdfx_procinfo.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_proxy_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_proxy_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_proxy_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_proxy_1.1.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_proxy_1.1.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_proxy_1.1.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_proxy_1.2.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_proxy_1.2.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_proxy_1.2.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_proxy_1.3.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_proxy_1.3.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_proxy_1.3.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libdisplay_buffer_proxy_1.4.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libdisplay_buffer_proxy_1.4.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libdisplay_buffer_proxy_1.4.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libeventhandler.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libeventhandler.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libeventhandler.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libextractortool.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libextractortool.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libextractortool.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libfaultlogger.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libfaultlogger.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libfaultlogger.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libfaultloggerd.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libfaultloggerd.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libfaultloggerd.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhdi_input.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhdi_input.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhdi_input.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libhuks_hdi_service_1.1.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libhuks_hdi_service_1.1.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libhuks_hdi_service_1.1.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "liblzma.z.so",
++        "so_file_path": "system/lib/chipset-sdk/liblzma.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: liblzma.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libnghttp2_shared.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libnghttp2_shared.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libnghttp2_shared.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libpcre2.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libpcre2.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libpcre2.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libressched_client.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libressched_client.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libressched_client.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "librustc_demangle.z.so",
++        "so_file_path": "system/lib/chipset-sdk/librustc_demangle.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: librustc_demangle.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libselinux.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libselinux.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libselinux.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libserial_interface_service_1.0.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libserial_interface_service_1.0.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libserial_interface_service_1.0.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libstack_printer.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libstack_printer.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libstack_printer.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libstorage_manager_acl.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libstorage_manager_acl.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libstorage_manager_acl.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libstring_utils.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libstring_utils.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libstring_utils.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libthread_sampler.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libthread_sampler.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libthread_sampler.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libucollection_client.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libucollection_client.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libucollection_client.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libunwinder.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libunwinder.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libunwinder.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libusb_adapter.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libusb_adapter.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libusb_adapter.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libusb_ddk_device.z.so",
++        "so_file_path": "system/lib/chipset-sdk/libusb_ddk_device.z.so",
++        "dep_file_name": "ld-musl-x86_64.so.1",
++        "dep_file_path": "system/lib/ld-musl-x86_64.so.1",
++        "description": "x86 port: libusb_ddk_device.z.so depends on x86_64 musl loader ld-musl-x86_64.so.1"
++    },
++    {
++        "so_file_name": "libEGL.so",
++        "so_file_path": "system/lib/libEGL.so",
++        "dep_file_name": "libEGL.so.1.0.0",
++        "dep_file_path": "system/lib64/libEGL.so.1.0.0",
++        "description": "x86 port: libEGL.so depends on libEGL.so.1.0.0"
++    },
++    {
++        "so_file_name": "libEGL.so",
++        "so_file_path": "system/lib/libEGL.so",
++        "dep_file_name": "libGLESv1_CM.so.1.1.0",
++        "dep_file_path": "system/lib64/libGLESv1_CM.so.1.1.0",
++        "description": "x86 port: libEGL.so depends on libGLESv1_CM.so.1.1.0"
++    },
++    {
++        "so_file_name": "libEGL.so",
++        "so_file_path": "system/lib/libEGL.so",
++        "dep_file_name": "libGLESv2.so.2.0.0",
++        "dep_file_path": "system/lib64/libGLESv2.so.2.0.0",
++        "description": "x86 port: libEGL.so depends on libGLESv2.so.2.0.0"
++    },
++    {
++        "so_file_name": "libgallium_dri.so",
++        "so_file_path": "system/lib/libgallium_dri.so",
++        "dep_file_name": "libdrm_amdgpu.so",
++        "dep_file_path": "vendor/lib64/chipsetsdk/libdrm_amdgpu.so",
++        "description": "x86 port: libgallium_dri.so depends on libdrm_amdgpu.so"
++    },
++    {
++        "so_file_name": "libgallium_dri.so",
++        "so_file_path": "system/lib/libgallium_dri.so",
++        "dep_file_name": "libdrm_nouveau.so",
++        "dep_file_path": "vendor/lib64/chipsetsdk/libdrm_nouveau.so",
++        "description": "x86 port: libgallium_dri.so depends on libdrm_nouveau.so"
++    },
++    {
++        "so_file_name": "libgallium_dri.so",
++        "so_file_path": "system/lib/libgallium_dri.so",
++        "dep_file_name": "libdrm_radeon.so",
++        "dep_file_path": "vendor/lib64/chipsetsdk/libdrm_radeon.so",
++        "description": "x86 port: libgallium_dri.so depends on libdrm_radeon.so"
++    },
++    {
++        "so_file_name": "libgallium_dri.so",
++        "so_file_path": "system/lib/libgallium_dri.so",
++        "dep_file_name": "libelf.so",
++        "dep_file_path": "vendor/lib64/chipsetsdk/libelf.so",
++        "description": "x86 port: libgallium_dri.so depends on libelf.so"
+     }
+-]
++]
+\ No newline at end of file
+diff --git a/tools/deps_guard/rules_checker/base_innerapi_rule.py b/tools/deps_guard/rules_checker/base_innerapi_rule.py
+index 978697b..1ecf9b5 100644
+--- a/tools/deps_guard/rules_checker/base_innerapi_rule.py
++++ b/tools/deps_guard/rules_checker/base_innerapi_rule.py
+@@ -33,7 +33,7 @@ class BaseInnerapiRule(BaseRule):
+         self.__valid_vendor_tags = ["llndk", "chipsetsdk", "chipsetsdk_sp", "llndk", "passthrough",
+                                    "passthrough_indirect"] + self.__ignored_tags
+         self.__base_sofiles = ["libc.so", "libutils.z.so", "ld-musl-aarch64.so.1", "libconfiguration.z.so", "libusbmanager.z.so", 
+-                               "libsms.z.so"]
++                               "libsms.z.so", "ld-musl-x86_64.so.1"]
+ 
+     def check(self):
+         passed = True

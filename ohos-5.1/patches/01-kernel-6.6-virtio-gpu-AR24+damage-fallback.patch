@@ -1,0 +1,32 @@
+diff --git a/drivers/gpu/drm/virtio/virtgpu_plane.c b/drivers/gpu/drm/virtio/virtgpu_plane.c
+index 36de73e03..dc00307cb 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_plane.c
++++ b/drivers/gpu/drm/virtio/virtgpu_plane.c
+@@ -31,6 +31,7 @@
+ 
+ static const uint32_t virtio_gpu_formats[] = {
+ 	DRM_FORMAT_HOST_XRGB8888,
++	DRM_FORMAT_HOST_ARGB8888,
+ };
+ 
+ static const uint32_t virtio_gpu_cursor_formats[] = {
+@@ -210,8 +211,17 @@ static void virtio_gpu_primary_plane_update(struct drm_plane *plane,
+ 		return;
+ 	}
+ 
+-	if (!drm_atomic_helper_damage_merged(old_state, plane->state, &rect))
+-		return;
++	if (!drm_atomic_helper_damage_merged(old_state, plane->state, &rect)) {
++		/* OHOS display HAL commits do not always attach FB_DAMAGE_CLIPS and may
++		 * re-commit the same fb; real DPU hardware re-scans out every frame, so
++		 * mirror that on the virtual device: treat "no damage" as full damage,
++		 * otherwise the host scanout keeps showing stale content forever.
++		 */
++		rect.x1 = 0;
++		rect.y1 = 0;
++		rect.x2 = plane->state->src_w >> 16;
++		rect.y2 = plane->state->src_h >> 16;
++	}
+ 
+ 	bo = gem_to_virtio_gpu_obj(plane->state->fb->obj[0]);
+ 	if (bo->dumb)

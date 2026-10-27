@@ -1,0 +1,14 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index 6c471c7..6cc1f3e 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -126,6 +126,9 @@ ohos_shared_library("lzma_shared") {
+     deps = [ ":lzma_source_arm64" ]
+   } else if (target_cpu == "riscv64") {
+     deps = [ ":lzma_source_riscv64" ]
++  } else if (target_cpu == "x86_64" || target_cpu == "x64") {
++    # x86 port: reuse the host source set (plain C, no arch asm needed)
++    deps = [ ":lzma_source_x86_host" ]
+   }
+   innerapi_tags = [
+     "chipsetsdk_sp_indirect",

@@ -1,0 +1,22 @@
+diff --git a/x86_general/hardware/gpu/third_party/elfutils/BUILD.gn b/x86_general/hardware/gpu/third_party/elfutils/BUILD.gn
+index acdde4d..6934e27 100644
+--- a/x86_general/hardware/gpu/third_party/elfutils/BUILD.gn
++++ b/x86_general/hardware/gpu/third_party/elfutils/BUILD.gn
+@@ -36,6 +36,7 @@ ohos_shared_library("libelf") {
+   ]
+ 
+   sources = [
++        "//third_party/elfutils/lib/eu-search.c",
+         "//third_party/elfutils/libelf/elf32_checksum.c",
+         "//third_party/elfutils/libelf/elf32_fsize.c",
+         "//third_party/elfutils/libelf/elf32_getchdr.c",
+@@ -100,8 +101,7 @@ ohos_shared_library("libelf") {
+         "//third_party/elfutils/libelf/elf_rawfile.c",
+         "//third_party/elfutils/libelf/elf_readall.c",
+         "//third_party/elfutils/libelf/elf_scnshndx.c",
+-        # "//third_party/elfutils/libelf/elf_strptr.c",
+-        "libelf/elf_strptr.c",
++        "//third_party/elfutils/libelf/elf_strptr.c",
+         "//third_party/elfutils/libelf/elf_update.c",
+         "//third_party/elfutils/libelf/elf_version.c",
+         "//third_party/elfutils/libelf/gelf_checksum.c",

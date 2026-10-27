@@ -1,0 +1,19 @@
+diff --git a/inherit/rich.json b/inherit/rich.json
+index ccd543d..de8a30d 100644
+--- a/inherit/rich.json
++++ b/inherit/rich.json
+@@ -1542,14 +1542,6 @@
+     {
+       "subsystem": "ai",
+       "components": [
+-        {
+-          "component": "neural_network_runtime",
+-          "features": []
+-        },
+-        {
+-          "component": "mindspore",
+-          "features": []
+-        },
+         {
+           "component": "intelligent_voice_framework",
+           "features": []

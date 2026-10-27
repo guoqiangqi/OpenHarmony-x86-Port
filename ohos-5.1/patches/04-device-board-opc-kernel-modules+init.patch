@@ -1,0 +1,660 @@
+diff --git a/x86_general/BUILD.gn b/x86_general/BUILD.gn
+index 1ebf6ae..edcffe9 100644
+--- a/x86_general/BUILD.gn
++++ b/x86_general/BUILD.gn
+@@ -23,6 +23,8 @@ group("x86_group") {
+     "firmware:firmware",
+     # "bluetooth:libbt_vendor",
+     # "modules:modules_group",
++    "modules_gpu:modules_gpu_group",
++    "modules_net:modules_net_group",
+     "test:test",
+   ]
+ }
+diff --git a/x86_general/cfg/BUILD.gn b/x86_general/cfg/BUILD.gn
+index 18498c1..4e7ec8a 100644
+--- a/x86_general/cfg/BUILD.gn
++++ b/x86_general/cfg/BUILD.gn
+@@ -33,10 +33,22 @@ ohos_prebuilt_etc("fstab.x86_general") {
+   install_enable = true
+ }
+ 
++# Network & device nodes setup (e1000 + fb0/hdf mknod + eth0 static addr).
++# Installed into /vendor/etc/init/ which is scanned by init (init_config.c),
++# so cmds are merged into the post-fs-data job at boot.
++ohos_prebuilt_etc("zz_net_setup.cfg") {
++  source = "zz_net_setup.cfg"
++  part_name = "device_x86_general"
++  install_images = [ vendor_base_dir ]
++  module_install_dir = "etc/init"
++  install_enable = true
++}
++
+ group("init_configs") {
+   deps = [
+     ":fstab.x86_general",
+     ":init.x86_general.cfg",
+     ":init.x86_general.usb.cfg",
++    ":zz_net_setup.cfg",
+   ]
+ }
+diff --git a/x86_general/cfg/init.x86_general.cfg b/x86_general/cfg/init.x86_general.cfg
+index dad8b3f..163dcee 100644
+--- a/x86_general/cfg/init.x86_general.cfg
++++ b/x86_general/cfg/init.x86_general.cfg
+@@ -1,59 +1,523 @@
+-{
+-    "import" : [
+-            "init.${ohos.boot.hardware}.usb.cfg"
+-    ],
+-    "jobs" : [{
+-            "name" : "pre-init",
+-            "cmds" : [
+-                "write /proc/sys/vm/min_free_kbytes 10240",
+-                "mount debugfs /sys/kernel/debug /sys/kernel/debug mode=755",
+-                "write /sys/kernel/debug/hisi_inno_phy/role peripheral"
+-            ]
+-        }, {
+-            "name" : "init",
+-            "cmds" : [
+-                "write /proc/1/oom_score_adj -1000",
+-                "write /proc/sys/kernel/hung_task_timeout_secs 90",
+-                "write /sys/kernel/hungtask/enable on",
+-                "write /sys/kernel/hungtask/monitorlist whitelist,init,appspawn",
+-                "chown system system /sys/kernel/hungtask/userlist",
+-                "mkdir /data/service/el0/battery",
+-                "symlink /sys/class/power_supply/BATT /data/service/el0/battery/battery",
+-                "symlink /sys/class/power_supply/ACAD /data/service/el0/battery/ohos_charger"
+-            ]
+-        }, {
+-            "name" : "boot",
+-            "cmds" : [
+-                "write /sys/block/zram0/disksize 1024M",
+-                "mkswap /dev/block/zram0",
+-                "swapon /dev/block/zram0",
+-                "chmod 777 /dev/ttyAMA0",
+-                "chmod 775 /sys/class/rfkill/rfkill0/state",
+-                "chown blue_host blue_host /sys/class/rfkill/rfkill0/state",
+-                "chown blue_host blue_host /dev/ttyAMA0",
+-                "chown bluetooth bluetooth /dev/uhid",
+-                "chmod 777 /dev/tun",
+-                "chown bluetooth bluetooth /dev/tun",
+-                "chmod 777 /dev/rtkbt_dev",
+-                "chmod 0440 /proc/interrupts",
+-                "chmod 0440 /proc/stat",
+-                "chmod 0640 /dev/xt_qtaguid",
+-                "chmod 0660 /proc/net/xt_qtaguid/ctrl",
+-                "chmod 0440 /proc/net/xt_qtaguid/stats",
+-                "chmod 666 /dev/dri/card1",
+-                "chown system graphics /dev/dri/card1",
+-                "chown system graphics /dev/graphics/fb0",
+-                "chmod 666 /dev/ion",
+-                "chown system system /dev/ion",
+-                "chmod 666 /dev/sched_rtg_ctrl",
+-                "chown system system /dev/sched_rtg_ctrl"
+-            ]
+-        }, {
+-            "name" : "post-fs-data",
+-            "cmds" : [
+-                "restorecon",
+-                "restorecon /data/updater"
+-            ]
+-        }
+-    ]
+-}
++{
++  "jobs": [
++    {
++      "name": "post-fs-data",
++      "cmds": []
++    },
++    {
++      "name": "post-fs-data",
++      "cmds": [
++        "mkdir /data/service/el0/intelligent_voice 0770 intell_voice_host intell_voice_host",
++        "mkdir /data/service/el0/intelligent_voice/wakeup 0770 intell_voice_host intell_voice_host"
++      ]
++    },
++    {
++      "name": "post-fs-data",
++      "cmds": [
++        "exec /system/bin/mknod /dev/fb0 c 29 0",
++        "chmod 666 /dev/fb0",
++        "exec /system/bin/mknod /dev/hdf c 511 0",
++        "chmod 666 /dev/hdf",
++        "syncexec /system/bin/insmod /system/lib/modules/drm_shmem_helper.ko",
++        "syncexec /system/bin/insmod /system/lib/modules/virtio_dma_buf.ko",
++        "syncexec /system/bin/insmod /system/lib/modules/virtio-gpu.ko",
++        "syncexec /system/bin/insmod /system/lib/modules/e1000.ko",
++        "exec /system/bin/ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up"
++      ]
++    }
++  ],
++  "services": [
++    {
++      "name": "hdf_devmgr",
++      "path": [
++        "/vendor/bin/hdf_devmgr"
++      ],
++      "uid": "hdf_devmgr",
++      "gid": [
++        "hdf_devmgr",
++        "readproc",
++        "uhdf_driver",
++        "data_reserve"
++      ],
++      "start-mode": "boot",
++      "secon": "u:r:hdf_devmgr:s0",
++      "critical": [
++        1,
++        4,
++        60
++      ],
++      "bootevents": [
++        "bootevent.hdf_devmgr.ready"
++      ]
++    },
++    {
++      "name": "composer_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "12",
++        "composer_host",
++        "-8",
++        "1"
++      ],
++      "uid": "composer_host",
++      "gid": [
++        "composer_host",
++        "graphics",
++        "vendor_mpp_driver"
++      ],
++      "caps": [
++        "SYS_NICE"
++      ],
++      "secon": "u:r:composer_host:s0"
++    },
++    {
++      "name": "allocator_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "13",
++        "allocator_host",
++        "0",
++        "0"
++      ],
++      "uid": "allocator_host",
++      "gid": [
++        "allocator_host"
++      ],
++      "secon": "u:r:allocator_host:s0"
++    },
++    {
++      "name": "sample_host",
++      "ondemand": true,
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "0",
++        "sample_host",
++        "0",
++        "0"
++      ],
++      "uid": "sample_host",
++      "gid": [
++        "sample_host",
++        "uhdf_driver"
++      ],
++      "secon": "u:r:sample_host:s0"
++    },
++    {
++      "name": "blue_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "1",
++        "blue_host",
++        "0",
++        "0"
++      ],
++      "uid": "blue_host",
++      "gid": [
++        "blue_host"
++      ],
++      "caps": [
++        "NET_ADMIN"
++      ],
++      "secon": "u:r:blue_host:s0"
++    },
++    {
++      "name": "a2dp_host",
++      "ondemand": true,
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "2",
++        "a2dp_host",
++        "0",
++        "0"
++      ],
++      "uid": "a2dp_host",
++      "gid": [
++        "a2dp_host"
++      ],
++      "secon": "u:r:a2dp_host:s0"
++    },
++    {
++      "name": "usb_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "3",
++        "usb_host",
++        "0",
++        "0"
++      ],
++      "uid": "usb_host",
++      "gid": [
++        "usb_host"
++      ],
++      "caps": [
++        "DAC_OVERRIDE"
++      ],
++      "secon": "u:r:usb_host:s0"
++    },
++    {
++      "name": "power_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "4",
++        "power_host",
++        "0",
++        "0"
++      ],
++      "uid": "power_host",
++      "gid": [
++        "power_host",
++        "system",
++        "log"
++      ],
++      "caps": [
++        "BLOCK_SUSPEND"
++      ],
++      "secon": "u:r:power_host:s0"
++    },
++    {
++      "name": "wifi_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "5",
++        "wifi_host",
++        "0",
++        "0"
++      ],
++      "uid": "wifi_host",
++      "gid": [
++        "wifi_host",
++        "wifi_group"
++      ],
++      "caps": [
++        "DAC_OVERRIDE",
++        "DAC_READ_SEARCH",
++        "NET_ADMIN",
++        "NET_RAW"
++      ],
++      "secon": "u:r:wifi_host:s0"
++    },
++    {
++      "name": "wpa_host",
++      "ondemand": true,
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "6",
++        "wpa_host",
++        "0",
++        "0"
++      ],
++      "uid": "wifi",
++      "gid": [
++        "wifi",
++        "wifi_group",
++        "wifi_host"
++      ],
++      "caps": [
++        "DAC_OVERRIDE",
++        "DAC_READ_SEARCH",
++        "NET_ADMIN",
++        "NET_RAW"
++      ],
++      "permission": [
++        "ohos.permission.ACCESS_CERT_MANAGER"
++      ],
++      "secon": "u:r:wifi_host:s0"
++    },
++    {
++      "name": "hostapd_host",
++      "ondemand": true,
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "7",
++        "hostapd_host",
++        "0",
++        "0"
++      ],
++      "uid": "wifi",
++      "gid": [
++        "wifi",
++        "wifi_group",
++        "wifi_host"
++      ],
++      "caps": [
++        "DAC_OVERRIDE",
++        "DAC_READ_SEARCH",
++        "NET_ADMIN",
++        "NET_RAW"
++      ],
++      "secon": "u:r:wifi_host:s0"
++    },
++    {
++      "name": "audio_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "8",
++        "audio_host",
++        "0",
++        "0"
++      ],
++      "uid": "audio_host",
++      "gid": [
++        "audio_host",
++        "uhdf_driver",
++        "root",
++        "audio"
++      ],
++      "secon": "u:r:audio_host:s0"
++    },
++    {
++      "name": "camera_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "9",
++        "camera_host",
++        "0",
++        "0"
++      ],
++      "uid": "camera_host",
++      "gid": [
++        "camera_host",
++        "uhdf_driver",
++        "vendor_mpp_driver"
++      ],
++      "secon": "u:r:camera_host:s0"
++    },
++    {
++      "name": "clearplay_host",
++      "ondemand": true,
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "10",
++        "clearplay_host",
++        "0",
++        "0"
++      ],
++      "uid": "clearplay_host",
++      "gid": [
++        "clearplay_host"
++      ],
++      "secon": "u:r:clearplay_host:s0"
++    },
++    {
++      "name": "input_user_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "11",
++        "input_user_host",
++        "0",
++        "0"
++      ],
++      "uid": "input_user_host",
++      "gid": [
++        "input_user_host",
++        "uhdf_driver",
++        "uhid"
++      ],
++      "secon": "u:r:input_user_host:s0"
++    },
++    {
++      "name": "sensor_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "14",
++        "sensor_host",
++        "0",
++        "0"
++      ],
++      "uid": "sensor_host",
++      "gid": [
++        "sensor_host",
++        "uhdf_driver"
++      ],
++      "secon": "u:r:sensor_host:s0"
++    },
++    {
++      "name": "vibrator_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "15",
++        "vibrator_host",
++        "0",
++        "0"
++      ],
++      "uid": "vibrator_host",
++      "gid": [
++        "vibrator_host"
++      ],
++      "secon": "u:r:vibrator_host:s0"
++    },
++    {
++      "name": "light_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "16",
++        "light_host",
++        "0",
++        "0"
++      ],
++      "uid": "light_host",
++      "gid": [
++        "light_host"
++      ],
++      "secon": "u:r:light_host:s0"
++    },
++    {
++      "name": "codec_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "17",
++        "codec_host",
++        "0",
++        "0"
++      ],
++      "uid": "codec_host",
++      "gid": [
++        "codec_host",
++        "uhdf_driver",
++        "vendor_mpp_driver"
++      ],
++      "secon": "u:r:codec_host:s0"
++    },
++    {
++      "name": "dcamera_host",
++      "ondemand": true,
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "18",
++        "dcamera_host",
++        "0",
++        "0"
++      ],
++      "uid": "dcamera_host",
++      "gid": [
++        "dcamera_host"
++      ],
++      "secon": "u:r:dcamera_host:s0"
++    },
++    {
++      "name": "daudio_host",
++      "ondemand": true,
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "19",
++        "daudio_host",
++        "0",
++        "0"
++      ],
++      "uid": "daudio_host",
++      "gid": [
++        "daudio_host"
++      ],
++      "secon": "u:r:daudio_host:s0"
++    },
++    {
++      "name": "face_auth_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "20",
++        "face_auth_host",
++        "0",
++        "0"
++      ],
++      "uid": "face_auth_host",
++      "gid": [
++        "face_auth_host"
++      ],
++      "secon": "u:r:face_auth_host:s0"
++    },
++    {
++      "name": "pin_auth_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "21",
++        "pin_auth_host",
++        "0",
++        "0"
++      ],
++      "uid": "pin_auth_host",
++      "gid": [
++        "pin_auth_host"
++      ],
++      "secon": "u:r:pin_auth_host:s0"
++    },
++    {
++      "name": "user_auth_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "22",
++        "user_auth_host",
++        "0",
++        "0"
++      ],
++      "uid": "user_auth_host",
++      "gid": [
++        "user_auth_host"
++      ],
++      "secon": "u:r:user_auth_host:s0"
++    },
++    {
++      "name": "fingerprint_auth_host",
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "23",
++        "fingerprint_auth_host",
++        "0",
++        "0"
++      ],
++      "uid": "fingerprint_auth_host",
++      "gid": [
++        "fingerprint_auth_host"
++      ],
++      "secon": "u:r:fingerprint_auth_host:s0"
++    },
++    {
++      "name": "location_host",
++      "ondemand": true,
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "24",
++        "location_host",
++        "0",
++        "0"
++      ],
++      "uid": "location_host",
++      "gid": [
++        "location_host"
++      ],
++      "secon": "u:r:location_host:s0"
++    },
++    {
++      "name": "partitionslot_host",
++      "ondemand": true,
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "25",
++        "partitionslot_host",
++        "0",
++        "0"
++      ],
++      "uid": "useriam",
++      "gid": [
++        "useriam",
++        "update"
++      ],
++      "secon": "u:r:partitionslot_host:s0"
++    },
++    {
++      "name": "intell_voice_host",
++      "ondemand": true,
++      "path": [
++        "/vendor/bin/hdf_devhost",
++        "26",
++        "intell_voice_host",
++        "0",
++        "0"
++      ],
++      "uid": "intell_voice_host",
++      "gid": [
++        "intell_voice_host"
++      ],
++      "secon": "u:r:intell_voice_host:s0"
++    }
++  ]
++}
+\ No newline at end of file
+diff --git a/x86_general/kernel/build_kernel.sh b/x86_general/kernel/build_kernel.sh
+index 17f368f..7eac0cc 100755
+--- a/x86_general/kernel/build_kernel.sh
++++ b/x86_general/kernel/build_kernel.sh
+@@ -159,9 +159,24 @@ MAKE="make LLVM=1 LLVM_IAS=1 "
+ 
+ ${MAKE} ${DEFCONFIG_FILE}
+ ${MAKE} bzImage -j$(nproc)
+-#编译ko模式（未启用）
+-# ${MAKE} modules -j$(nproc)
+-# ${MAKE} modules_install
++#编译ko模式（已启用）：与 bzImage 同源构建板级所需模块，避免内核小版本升级后 vermagic 失配
++#注：不做全量 make modules——此内核树 f2fs/dwc3 的 modpost 符号不一致（上游补丁残留）会全量失败；
++#单目标编译可绕过全局 MODPOST，且只编镜像实际需要的 4 个模块
++#三个 GPU 模块有依赖链（virtio-gpu → drm_shmem_helper → virtio_dma_buf），
++#必须同一 make 调用联编，否则 MODPOST 批次内解析不到依赖符号而报 undefined
++${MAKE} drivers/virtio/virtio_dma_buf.ko drivers/gpu/drm/drm_shmem_helper.ko drivers/gpu/drm/virtio/virtio-gpu.ko -j$(nproc)
++${MAKE} drivers/net/ethernet/intel/e1000/e1000.ko -j$(nproc)
++#同步关键 ko 到板级 prebuilt 源目录（modules_gpu/modules_net 由 ohos_prebuilt_etc 装入镜像）
++#注：GN 增量构建时 prebuilt 拷贝与内核编译不保证先后，若 vermagic 变化请重跑一次构建
++KO_DST_GPU=${ROOT_DIR}/device/board/${PRODUCT_COMPANY}/${DEVICE_NAME}/modules_gpu
++KO_DST_NET=${ROOT_DIR}/device/board/${PRODUCT_COMPANY}/${DEVICE_NAME}/modules_net
++mkdir -p ${KO_DST_GPU} ${KO_DST_NET}
++cp -f ${KERNEL_OBJ_TMP_PATH}/drivers/virtio/virtio_dma_buf.ko ${KO_DST_GPU}/
++cp -f ${KERNEL_OBJ_TMP_PATH}/drivers/gpu/drm/drm_shmem_helper.ko ${KO_DST_GPU}/
++cp -f ${KERNEL_OBJ_TMP_PATH}/drivers/gpu/drm/virtio/virtio-gpu.ko ${KO_DST_GPU}/
++cp -f ${KERNEL_OBJ_TMP_PATH}/drivers/net/ethernet/intel/e1000/e1000.ko ${KO_DST_NET}/
++echo "synced kernel modules (vermagic check):"
++md5sum ${KO_DST_GPU}/virtio_dma_buf.ko ${KO_DST_GPU}/drm_shmem_helper.ko ${KO_DST_GPU}/virtio-gpu.ko ${KO_DST_NET}/e1000.ko
+ 
+ mkdir -p ${OUT_PKG_DIR}
+ 

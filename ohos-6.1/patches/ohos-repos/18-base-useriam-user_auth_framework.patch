@@ -1,0 +1,12 @@
+diff --git a/interfaces/inner_api/user_access_ctrl_client_callback.h b/interfaces/inner_api/user_access_ctrl_client_callback.h
+index c02d3de5..339db31b 100644
+--- a/interfaces/inner_api/user_access_ctrl_client_callback.h
++++ b/interfaces/inner_api/user_access_ctrl_client_callback.h
+@@ -31,6 +31,7 @@ namespace UserIam {
+ namespace UserAuth {
+ class VerifyTokenCallback {
+ public:
++    virtual ~VerifyTokenCallback() = default;
+     /**
+      * @brief The callback return verify token result.
+      *

@@ -1,0 +1,189 @@
+diff --git a/meson.build b/meson.build
+index adf9a7371b7..7790f2e83db 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1017,7 +1017,7 @@ if with_platform_ohos
+ endif
+ 
+ #prog_python = import('python').find_installation('python3')
+-prog_python = '/usr/bin/python3'
++prog_python = import('python').find_installation('python3')
+ 
+ has_mako = run_command(
+   prog_python, '-c',
+diff --git a/ohos/build_mesa3d.py b/ohos/build_mesa3d.py
+index 16b466becd3..4aa33366864 100755
+--- a/ohos/build_mesa3d.py
++++ b/ohos/build_mesa3d.py
+@@ -52,6 +52,17 @@ os.environ['PATH'] = path_new
+ os.chdir(mesa3d_dir)
+ prepare_environment(project_dir, product)
+ 
++# x86 products (QEMU/soft rendering): build swrast-only gallium stack without
++# LLVM (softpipe fallback), instead of the ARM panfrost default.
++if 'x86' in product.lower():
++    gallium_drivers = 'swrast'
++    tools = ''
++    extra_opts = ['-Dllvm=disabled', '-Ddraw-use-llvm=false', '-Dzstd=disabled']
++else:
++    gallium_drivers = 'panfrost'
++    tools = 'panfrost'
++    extra_opts = []
++
+ meson_cmd = [
+     'meson',
+     'setup',
+@@ -60,17 +71,17 @@ meson_cmd = [
+     '-Dplatforms=ohos',
+     '-Degl-native-platform=ohos',
+     '-Ddri-drivers=',
+-    '-Dgallium-drivers=panfrost',
++    F'-Dgallium-drivers={gallium_drivers}',
+     '-Dvulkan-drivers=',
+     '-Dgbm=enabled',
+     '-Degl=enabled',
+     '-Dcpp_rtti=false',
+     '-Dglx=disabled',
+-    '-Dtools=panfrost',
++    F'-Dtools={tools}',
+     '-Ddri-search-path=/system/lib',
+     '--cross-file=cross_file',
+     F'--prefix={mesa3d_dir}/build-ohos/install',
+-]
++] + extra_opts
+ 
+ subprocess.run(meson_cmd, check=True)
+ subprocess.run(F'ninja -C build-ohos -j{nproc}', shell=True, check=True)
+diff --git a/ohos/meson_cross_process.py b/ohos/meson_cross_process.py
+index 83e23488211..bf3b9de0214 100644
+--- a/ohos/meson_cross_process.py
++++ b/ohos/meson_cross_process.py
+@@ -28,7 +28,7 @@ import os
+ sysroot_stub = 'sysroot_stub'
+ project_stub = 'project_stub'
+ 
+-corss_file_content='''
++corss_file_content_arm='''
+ [properties]
+ needs_exe_wrapper = true
+ 
+@@ -90,9 +90,63 @@ cpu = 'armv7'
+ endian = 'little'
+ '''
+ 
+-def generate_cross_file(project_stub_in, sysroot_stub_in):
++corss_file_content_x86_64='''
++[properties]
++needs_exe_wrapper = true
++
++c_args = [
++    '--target=x86_64-linux-ohos',
++    '--sysroot=sysroot_stub',
++    '-fPIC']
++
++cpp_args = [
++    '--target=x86_64-linux-ohos',
++    '--sysroot=sysroot_stub',
++    '-fPIC']
++    
++c_link_args = [
++    '--target=x86_64-linux-ohos',
++    '-fPIC',
++    '--sysroot=sysroot_stub',
++    '-Lsysroot_stub/usr/lib/x86_64-linux-ohos',
++    '-Lproject_stub/prebuilts/clang/ohos/linux-x86_64/llvm/lib/x86_64-linux-ohos/c++',
++    '--rtlib=compiler-rt',
++    ]
++
++cpp_link_args = [
++    '--target=x86_64-linux-ohos',
++    '--sysroot=sysroot_stub',
++    '-Lsysroot_stub/usr/lib/x86_64-linux-ohos',
++    '-Lproject_stub/prebuilts/clang/ohos/linux-x86_64/llvm/lib/x86_64-linux-ohos/c++',
++    '-fPIC',
++    '-Wl,--exclude-libs=libunwind_llvm.a',
++    '-Wl,--exclude-libs=libc++_static.a',
++    '--rtlib=compiler-rt',
++    ]
++	
++[binaries]
++ar = 'project_stub/prebuilts/clang/ohos/linux-x86_64/llvm/bin/llvm-ar'
++c = ['ccache', 'project_stub/prebuilts/clang/ohos/linux-x86_64/llvm/bin/clang']
++cpp = ['ccache', 'project_stub/prebuilts/clang/ohos/linux-x86_64/llvm/bin/clang++']
++c_ld= 'lld'
++cpp_ld = 'lld'
++strip = 'project_stub/prebuilts/clang/ohos/linux-x86_64/llvm/bin/llvm-strip'
++pkgconfig = '/usr/bin/pkg-config'
++
++[host_machine]
++system = 'linux'
++cpu_family = 'x86_64'
++cpu = 'x86_64'
++endian = 'little'
++'''
++
++def generate_cross_file(project_stub_in, sysroot_stub_in, arch='arm'):
+     with open("cross_file", 'w+') as file:
+-        result = corss_file_content.replace("project_stub", project_stub_in)
++        if arch == 'x86_64':
++            content = corss_file_content_x86_64
++        else:
++            content = corss_file_content_arm
++        result = content.replace("project_stub", project_stub_in)
+         result = result.replace("sysroot_stub", sysroot_stub_in)
+         file.write(result)
+     print("generate_cross_file")
+@@ -107,9 +161,38 @@ def generate_pc_file(file_raw, project_dir, product_name):
+             raw_content = file_raw.read()
+             raw_content = raw_content.replace("ohos_project_directory_stub", project_dir)
+             raw_content = raw_content.replace("ohos-arm-release", product_name)
++            if 'x86' in product_name.lower():
++                # innerkits arch-specific include dirs use ohos-x86_64 for x86 products
++                raw_content = raw_content.replace("innerkits/ohos-arm/", "innerkits/ohos-x86_64/")
+             pc_file.write(raw_content)
+     print("generate_pc_file")
+ 
++def patch_pc_for_x86_64(project_dir):
++    """x86_64 products have no rockchip gbm prebuilts and no expat build output;
++    point gbm at the opc device prebuilts and expat at the skia-internal one."""
++    gpu_dir = os.path.join(project_dir, 'device/soc/opc/x86_general/hardware/gpu')
++    with open('pkgconfig/gbm.pc', 'w+') as f:
++        f.write('ohos_project_dir=' + project_dir + '\n'
++                'libdir=' + gpu_dir + '/lib64\n'
++                'includedir=' + gpu_dir + '/include\n\n'
++                'Name: gbm\n'
++                'Description: Userspace interface to kernel DRM services\n'
++                'Version: 2.5.109\n'
++                'Libs: -L${libdir} -l:libgbm.so.1.0.0\n'
++                'Cflags: -I${includedir}\n')
++    expat_lib = os.path.join(project_dir, 'out/x86_general/obj/third_party/skia/third_party/expat')
++    expat_inc = os.path.join(project_dir, 'third_party/skia/third_party/externals/expat/expat/lib')
++    with open('pkgconfig/expat.pc', 'w+') as f:
++        f.write('ohos_project_dir=' + project_dir + '\n'
++                'libdir=' + expat_lib + '\n'
++                'includedir=' + expat_inc + '\n\n'
++                'Name: expat\n'
++                'Version: 2.4.1\n'
++                'Description: expat XML parser\n'
++                'Libs: -L${libdir} -l:libexpat.a\n'
++                'Cflags: -I${includedir}\n')
++    print("patch_pc_for_x86_64")
++
+ def process_pkgconfig(project_dir, product_name):
+     template_dir = os.path.split(os.path.abspath( __file__))[0] + r"/pkgconfig_template"
+     templates = os.listdir(template_dir)
+@@ -124,8 +207,13 @@ def prepare_environment(project_path, product):
+     product = product.lower()
+     project_stub = project_path
+     sysroot_stub = os.path.join(project_stub, "out", product, "obj", "third_party", "musl")
+-    generate_cross_file(project_path, sysroot_stub)
++    if 'x86' in product:
++        generate_cross_file(project_path, sysroot_stub, 'x86_64')
++    else:
++        generate_cross_file(project_path, sysroot_stub)
+     process_pkgconfig(project_path, product)
++    if 'x86' in product:
++        patch_pc_for_x86_64(project_path)
+ 
+ if __name__ == '__main__':
+     if len(sys.argv) < 3:

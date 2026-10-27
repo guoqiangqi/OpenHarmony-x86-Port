@@ -1,0 +1,37 @@
+# Copyright (c) 2024 Diemit <598757652@qq.com>
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+import("//build/ohos.gni")
+
+# QEMU e1000 NIC module (built from the same kernel tree/toolchain as the
+# bzImage, vermagic 6.6.86). Loaded by /vendor/etc/init/zz_net_setup.cfg
+# (post-fs-data) together with eth0 static address setup, so hdc over
+# hostfwd works with zero manual injection.
+net_modules = [
+    "e1000.ko",
+]
+
+net_modules_deps = []
+foreach(name, net_modules) {
+    ohos_prebuilt_etc("${name}") {
+        source = "${name}"
+        install_enable = true
+        install_images = [ system_base_dir ]
+        module_install_dir = "lib/modules"
+        part_name = "device_x86_general"
+    }
+    net_modules_deps += [ ":${name}" ]
+}
+
+group("modules_net_group") {
+    deps = net_modules_deps
+}
