@@ -1,9 +1,9 @@
 # OpenHarmony 6.1 (API 23) x86_general 移植构建指南
 
 > 状态（2026-10-27）：镜像可从源码完整构建并启动到用户态（init 全流程 + 服务拉起），
-> 图形栈已借用 5.1 修复版 mesa（appspawn 崩溃归零）。**尚未完成**：内核 slub BUG
-> （后期服务阶段 kmem_cache_free 对象损坏 panic）、5.1 显示 HAL 补丁与 wrapper
-> init-fail 移植、hdc(SDK23) 握手。详见文末「剩余工作」。
+> 图形栈已借用 5.1 修复版 mesa（appspawn 崩溃归零），**内核 slub BUG 已根修**
+> （accesstokenid 双重释放，见 ohos-5.1/patches/06 + 本 README §8.1）。**尚未完成**：
+> 5.1 显示 HAL 补丁与 wrapper init-fail 移植、hdc(SDK23) 握手。详见文末「剩余工作」。
 
 ## 1. 源码获取（OHOS 本体不走 submodule，用 repo 工具）
 
@@ -42,9 +42,12 @@ git -C vendor/opc checkout 55d1ec2687bb4ff162ab62aa70509cd90fb533c4
 
 ```bash
 rm -rf kernel/linux/linux-6.6
-cp -a <已打好 5.1 补丁的树>/kernel/linux/linux-6.6 kernel/linux/linux-6.6
+cp -a <已打好 5.1 补丁的树>/kernel/linux/linux-6.6 kernel/linux/linux-6.6   # 必须含 01 + 06 两个内核补丁
 rm -rf out/x86_general/kernel/src_tmp out/x86_general/kernel/OBJ   # 强制重拷
 ```
+
+其中补丁 06（accesstokenid 双重释放根修）是 6.1 能存活过开机 ~557s 的**必要条件**
+（上游 linux-6.6 自带 bug，详见 ohos-5.1/patches/06 与 §8.1）。
 
 版本号差异（vermagic 6.6.86）由 build_kernel.sh 单目标联编保证 ko 匹配，无碍。
 
@@ -114,9 +117,14 @@ bash ../common/launch_qemu.sh ./ohos_disk_61.img     # grub: root=PARTLABEL=syst
 
 ## 8. 剩余工作（按优先级）
 
-1. **内核 slub BUG**：boot ~557s `kernel BUG at mm/slub.c:448`（kmem_cache_free 检测
-   对象损坏，ioctl 路径进入）→ panic。下一步：开 CONFIG_SLUB_DEBUG/KASAN 重编内核定位
-   （嫌疑 virtio-gpu dma-buf 释放路径；selinux 帧为不可靠帧）。
+1. ~~**内核 slub BUG**~~ **已解决**（2026-10-27）：根因不是 virtio-gpu，而是上游
+   accesstokenid 驱动删根节点时把替换指针写进**按值传入的局部参数地址**，
+   `g_token_perm_root` 悬垂 → 后续 add/remove 沿 Freed 遍历 → 双重释放 →
+   `BUG at mm/slub.c:448`。修复 = `ohos-5.1/patches/06-kernel-accesstokenid-doublefree.patch`
+   （传 `**root_addr` 写回真根）。证据链：`slub_debug=UFZ slab_nomerge` 下旧内核 51.6s 起
+   376 行 `FIX access_token_node`/OS_IPC 转储；同参数修复内核 609s+ 0 行；
+   无调试参数生产 cmdline 下旧内核 557s panic、修复内核 soak 通过。注意根因帧里的
+   selinux/access_tokenid add|remove 帧曾误导排查方向——真实肇事者是 remove 路径。
 2. **5.1 显示 HAL 补丁移植**（ohos-5.1/patches/03：ApplyPlane 几何 + 软 vsync + 镜像旁路）
    到 6.1 的 device/soc/opc display 源码 —— 结构有差异需手工适配。**尚未做**。
 3. **wrapper init-fail 移植**（ohos-5.1/patches/02 的 egl_no_init 机制）到 6.1 graphic_2d。

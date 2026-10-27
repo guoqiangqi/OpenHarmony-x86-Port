@@ -17,7 +17,7 @@
 3. 打补丁（顺序）：
    ```bash
    bash <trio>/vendor/opc/x86_general/patches/patch.sh     # opc 自带
-   for p in patches/0{1,2,3,4,5}-*.patch; do git -C <对应仓库> apply $p; done
+   for p in patches/0{1,2,3,4,5,6}-*.patch; do git -C <对应仓库> apply $p; done
    cp -r patches/untracked/* <树>/device/{board,soc}/opc/...   # 见 patches/README.md
    ```
    mesa 的 `-fno-emulated-tls`：meson configure 后跑 `bash patches/apply-emutls-flag.sh

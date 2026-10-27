@@ -1,0 +1,61 @@
+From: x86 port <port@opc.local>
+Subject: [PATCH] accesstokenid: fix dangling tree root on root-node removal (double free)
+
+remove_node_by_token() took the tree root BY VALUE and, when the removed node
+was the root (parent == NULL), wrote the replacement pointer to the address of
+its own local parameter:
+
+    new_node_addr = &root_node;      /* local copy — g_token_perm_root never updated */
+
+g_token_perm_root was left dangling to a node that the caller then
+kmem_cache_free()s. Every later add/remove walks (and rewrites) freed memory;
+under CONFIG_SLAB_FREELIST_HARDENED the stale freelist pointer trips
+BUG_ON(object == fp) at mm/slub.c:448 (boot ~557s kernel BUG / panic on
+6.1 x86_general), and slub_debug=UFZ shows 141x "Comm: OS_IPC_IX" +
+47x "Comm: accesstoken_service" object-state dumps plus
+"FIX access_token_node: Object not freed" with add/remove_permission on both
+stacks.
+
+Fix: pass struct token_perm_node **root_addr so the root case writes through
+to the caller's g_token_perm_root. Bug present in upstream OHOS linux-6.6
+(seen on both the 5.1 and 6.1 trees); 6.1 userspace just exercises the path
+harder.
+
+Verified: 6.1 x86_general, kernel 6.6.86, slub_debug=UFZ slab_nomerge.
+
+diff --git a/drivers/accesstokenid/access_tokenid.c b/drivers/accesstokenid/access_tokenid.c
+index 33a61ef16..a8fb234b0 100644
+--- a/drivers/accesstokenid/access_tokenid.c
++++ b/drivers/accesstokenid/access_tokenid.c
+@@ -184,11 +184,11 @@ static int add_node_to_tree(struct token_perm_node *root_node, struct token_perm
+ 	return 1;
+ }
+ 
+-static struct token_perm_node *remove_node_by_token(struct token_perm_node *root_node, uint32_t token)
++static struct token_perm_node *remove_node_by_token(struct token_perm_node **root_addr, uint32_t token)
+ {
+ 	struct token_perm_node *target_node = NULL;
+ 	struct token_perm_node *parent_node = NULL;
+-	find_node_by_token(root_node, token, &target_node, &parent_node);
++	find_node_by_token(*root_addr, token, &target_node, &parent_node);
+ 	if (target_node == NULL) {
+ 		pr_err("%s: target token to be removed not found.\n", __func__);
+ 		return NULL;
+@@ -196,7 +196,7 @@ static struct token_perm_node *remove_node_by_token(struct token_perm_node *root
+ 
+ 	struct token_perm_node **new_node_addr = NULL;
+ 	if (parent_node == NULL) {
+-		new_node_addr = &root_node;
++		new_node_addr = root_addr;
+ 	} else if (parent_node->perm_data.token > token) {
+ 		new_node_addr = &(parent_node->left);
+ 	} else {
+@@ -245,7 +245,7 @@ int access_tokenid_remove_permission(struct file *file, void __user *uarg)
+ 		return -EFAULT;
+ 
+ 	write_lock(&token_rwlock);
+-	struct token_perm_node *target_node = remove_node_by_token(g_token_perm_root, token);
++	struct token_perm_node *target_node = remove_node_by_token(&g_token_perm_root, token);
+ 	write_unlock(&token_rwlock);
+ 
+ 	if (target_node != NULL)
