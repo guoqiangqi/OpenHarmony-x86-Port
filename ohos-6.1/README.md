@@ -1,9 +1,10 @@
 # OpenHarmony 6.1 (API 23) x86_general 移植构建指南
 
-> 状态（2026-10-27）：镜像可从源码完整构建并启动到用户态（init 全流程 + 服务拉起），
-> 图形栈已借用 5.1 修复版 mesa（appspawn 崩溃归零），**内核 slub BUG 已根修**
-> （accesstokenid 双重释放，见 ohos-5.1/patches/06 + 本 README §8.1）。**尚未完成**：
-> 5.1 显示 HAL 补丁与 wrapper init-fail 移植、hdc(SDK23) 握手。详见文末「剩余工作」。
+> 状态（2026-10-28）：镜像可从源码完整构建并启动到用户态；内核 slub BUG、foundation
+> selabel 崩溃循环、vendor/data 分区不挂载（composer/mmi 全灭根因）、f2fs/ext4 错配、
+> hdf_devhost 缺失、hdc 握手 —— **全部已解决**（§8）；GL 已验证 `eglInitialize OK`。
+> 拼盘后必须跑 `scripts/fixup-disk.sh`（vendor 合并 + data 重格 + GL 使能）。
+> 唯一卡点：**RS 渲染循环 0 帧**（§8b）。详见文末。
 
 ## 1. 源码获取（OHOS 本体不走 submodule，用 repo 工具）
 
@@ -96,6 +97,7 @@ source /root/oh_env61/bin/activate        # python3.10 venv
 cd <staging>   # bzImage/ramdisk/system/vendor/userdata.img + scripts/disk_assemble.sh
 cp <tree>/out/x86_general/packages/phone/images/{bzImage,ramdisk.img,system.img,vendor.img,userdata.img} .
 bash scripts/disk_assemble.sh ./ohos_disk_61.img
+bash scripts/fixup-disk.sh ./ohos_disk_61.img <tree>/out/x86_general   # 必须！见 §8.3/8.4
 bash ../common/launch_qemu.sh ./ohos_disk_61.img     # grub: root=PARTLABEL=system
 ```
 
@@ -115,20 +117,49 @@ bash ../common/launch_qemu.sh ./ohos_disk_61.img     # grub: root=PARTLABEL=syst
 树侧同步替换 `device/soc/opc/x86_general/hardware/gpu/lib64{,/chipsetsdk}`。
 效果：appspawn 内核崩溃 dump **118 → 0**，boot 推进到 foundation 等后期服务。
 
-## 8. 剩余工作（按优先级）
+## 8. 已解决（2026-10-27/28 大扫除，按发现序）
 
-1. ~~**内核 slub BUG**~~ **已解决**（2026-10-27）：根因不是 virtio-gpu，而是上游
-   accesstokenid 驱动删根节点时把替换指针写进**按值传入的局部参数地址**，
-   `g_token_perm_root` 悬垂 → 后续 add/remove 沿 Freed 遍历 → 双重释放 →
-   `BUG at mm/slub.c:448`。修复 = `ohos-5.1/patches/06-kernel-accesstokenid-doublefree.patch`
-   （传 `**root_addr` 写回真根）。证据链：`slub_debug=UFZ slab_nomerge` 下旧内核 51.6s 起
-   376 行 `FIX access_token_node`/OS_IPC 转储；同参数修复内核 609s+ 0 行；
-   无调试参数生产 cmdline 下旧内核 557s panic、修复内核 soak 通过。注意根因帧里的
-   selinux/access_tokenid add|remove 帧曾误导排查方向——真实肇事者是 remove 路径。
-2. **5.1 显示 HAL 补丁移植**（ohos-5.1/patches/03：ApplyPlane 几何 + 软 vsync + 镜像旁路）
-   到 6.1 的 device/soc/opc display 源码 —— 结构有差异需手工适配。**尚未做**。
-3. **wrapper init-fail 移植**（ohos-5.1/patches/02 的 egl_no_init 机制）到 6.1 graphic_2d。
-4. hdc：SDK23 的 hdc 与 6.1 hdcd 握手失败（端口开、Connect failed），修好前用串口观察。
+1. ~~**内核 slub BUG**~~：根因不是 virtio-gpu，而是上游 accesstokenid 驱动删根节点时把
+   替换指针写进**按值传入的局部参数地址**，`g_token_perm_root` 悬垂 → 双重释放 →
+   `BUG at mm/slub.c:448`。修复 = `ohos-5.1/patches/06`（传 `**root_addr` 写回真根）。
+   证据：UFZ 下旧内核 51.6s 起 376 行转储 / 修复内核 0 行；生产 cmdline 92 分钟 soak 0 BUG。
+2. ~~**foundation 崩溃循环（15s 一崩）**~~：`libapp_domain_verify` 静态初始化 →
+   `RestoreconRecurse` → 无 file_contexts（build_selinux=false）时 `selabel_open`
+   仅带 digest 选项调用，其失败清理路径 free 未初始化指针 → SEGV。修复 =
+   `selinux_adapter` 的 selinux_restorecon.c 无路径选项时跳过 open
+   （patches/25）。**效果：SystemUI/lockscreen 首次能就绪**。
+3. ~~**multimodalinput 冻结循环 + composer_host 不启动**~~：根因 **6.1 运行时根本没有
+   挂载 vendor/data 分区** —— init 在挂任何分区前读 `/vendor/etc/fstab.x86_general`
+   （5.1 模型：vendor 树内嵌在 system 镜像根）。6.1 构建把 chipset 拆去独立 vendor.img
+   而 fstab 不可达 → `/vendor` 空目录 → 全部 HDF host（composer/allocator/audio/
+   input…）`pathArgs invalid` → mmi 在 `IDisplayComposerInterface::Get` 上冻结。
+   修复 = **vendor 树合并进 p2 根 /vendor**（fixup-disk.sh [1/4]）。
+4. ~~**根文件系统被降级只读 / 无 tmpfs**~~：fstab 可读后其对 sda4 按 ext4 跑
+   resize2fs/e2fsck，而 sda4 是 f2fs（6.1 默认）→ 失败 → 降级。f2fs.ko 未构建
+   （CONFIG_F2FS_FS=m 且无打包），直接**把 data 分区重格为 ext4**（fixup-disk.sh [2/4]）。
+5. ~~**hdf_devhost 二进制缺失**~~：上游 13e1a393 把 hdf_devhost 从 hdf_core 拆到
+   `drivers/peripheral/adapter`（part=drivers_adapter），产品 config 未含该组件 →
+   修复 = vendor/opc config.json hdf 子系统加 `drivers_adapter`（opc-trio 补丁）。
+6. ~~**hdc 握手失败**~~：是 2/3 的连带症状。foundation 存活 + composer 注册后
+   SDK23 hdc 直连成功（tconn//file recv/shell/hidumper 全通）。
+7. ~~**GL 路径**~~：**6.1 RS 无 5.1 式 CPU 回退，必须让 GL 真跑**（5.1 的
+   egl_no_init marker 公式在 6.1 上适得其反——RS 直接不出帧）。已验证
+   `eglInitialize OK ver 1.4`：graphic.cfg 给 render_service 加
+   LIBGL_ALWAYS_SOFTWARE=1 + LIBGL_DRIVERS_PATH=/system/lib64，并补
+   kms_swrast/swrast/virtio_gpu_dri 别名（fixup-disk.sh [3/4]）。wrapper 侧
+   v4 stubs/诊断已并入 patches/21。
+
+## 8b. 当前唯一卡点：RS 渲染循环未启动（0 帧）
+
+一切就绪但 RS 主循环死寂：屏幕已建（RSScreen 1280x800@75、SetScreenPowerStatus On）、
+composer 线程 EGL+swrast+ShaderCache 就绪、composer_host 已分配 client target
+（dumb 1280x832 AR24）、vsync 发生器活着（~56Hz）、hdc/hidumper/fpsCount 全可用——
+但 `FrameBufferSurface` BufferQueue 恒 [0x0]/0 buffers、`RefreshRateCounts` 空、
+输入注入无任何 RS 响应。扫描输出为开机残留灰噪（0xAA 散点，偶发微变）。
+下一步方向：RSMainThread 激活条件（RequestNextVSync 已发但主线程不跑）；
+hdc 实验环境已就绪（`hidumper -s 10`、hilog、kill render_service 触发式取证法）；
+另注意 `RegScreenRefresh`/`RegDisplayVBlankIdleCallback` 在 opc HAL 上 -2
+（V1_3/1_4 入口缺失，RS 侧仅告警，但值得先在 HAL 侧补齐再回归）。
 
 ## 9. 6.1 与 5.1 的关键区别（勿混淆）
 

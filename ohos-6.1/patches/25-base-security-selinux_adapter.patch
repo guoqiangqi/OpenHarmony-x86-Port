@@ -1,0 +1,46 @@
+diff --git a/framework/policycoreutils/src/selinux_restorecon.c b/framework/policycoreutils/src/selinux_restorecon.c
+index 5e00d1895..e5942e7d6 100644
+--- a/framework/policycoreutils/src/selinux_restorecon.c
++++ b/framework/policycoreutils/src/selinux_restorecon.c
+@@ -55,6 +55,17 @@ static void SetFileContextsHandle(void)
+     SelinuxOptions digestOption = {SELABEL_OPT_DIGEST, (char *)1};
+     options[index++] = digestOption;
+ 
++    // No file_contexts found (products built with build_selinux=false): skip
++    // selabel_open entirely. selabel_open() without a path option fails on
++    // its compiled-in default and its partial-init cleanup (selabel_close)
++    // frees an uninitialized pointer, crashing the calling process (seen as
++    // a foundation SEGV loop at SA .so static-init time). Leave g_fcHandle
++    // NULL — RestoreconCommon() already reports that as an error.
++    if (index <= 1) {
++        selinux_log(SELINUX_ERROR, "no file_contexts available, skip selabel_open\n");
++        return;
++    }
++
+     g_fcHandle = selabel_open(SELABEL_CTX_FILE, options, index);
+     if (g_fcHandle == NULL) {
+         selinux_log(SELINUX_ERROR, "File_contexts handle open fail\n");
+diff --git a/sepolicy/base/system/file_contexts b/sepolicy/base/system/file_contexts
+index db007ed3f..2dd1f338d 100644
+--- a/sepolicy/base/system/file_contexts
++++ b/sepolicy/base/system/file_contexts
+@@ -29,6 +29,11 @@
+ /preload      u:object_r:system_file:s0
+ /tmp      u:object_r:rootfs:s0
+ /sys           u:object_r:sys_file:s0
++/run                u:object_r:rootfs:s0
++/var                u:object_r:rootfs:s0
++/opt                u:object_r:rootfs:s0
++/usr                u:object_r:rootfs:s0
++/lib                u:object_r:rootfs:s0
+ 
+ /dev(/.*)?       u:object_r:dev_file:s0
+ /dev/functionfs(/.*)?       u:object_r:dev_functionfs_file:s0
+@@ -175,6 +180,7 @@
+ /chip_prod(/.*)?     u:object_r:chip_prod_file:s0
+ /chip_ckm(/.*)?      u:object_r:chip_ckm_file:s0
+ 
++/eng_chipsetrun(/.*)?     u:object_r:system_file:s0
+ /eng_system(/.*)?           u:object_r:system_file:s0
+ /eng_system/etc(/.*)?       u:object_r:system_etc_file:s0
+ /eng_system/lib(/.*)?       u:object_r:system_lib_file:s0

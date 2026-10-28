@@ -39,6 +39,7 @@ for p in "$HERE"/patches/opc-trio/*.patch; do
         vendor-config-x86port)      repo=vendor/opc ;;
         board-kernel-modules-cfg)   repo=device/board/opc ;;
         soc-display-hal-elfutils-lzma) repo=device/soc/opc ;;
+        soc-display-hal-port-from-51)  repo=device/soc/opc ;;
     esac
     git -C "$R/$repo" apply "$p" 2>/dev/null && echo "ok  $repo" || echo "skip/FAIL $repo"
 done

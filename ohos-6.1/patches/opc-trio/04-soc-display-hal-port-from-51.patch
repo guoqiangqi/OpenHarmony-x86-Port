@@ -1,0 +1,426 @@
+diff --git a/x86_general/hardware/display/src/display_device/core/hdi_layer.cpp b/x86_general/hardware/display/src/display_device/core/hdi_layer.cpp
+index 1995943..0650772 100644
+--- a/x86_general/hardware/display/src/display_device/core/hdi_layer.cpp
++++ b/x86_general/hardware/display/src/display_device/core/hdi_layer.cpp
+@@ -15,15 +15,20 @@
+ 
+ #include "hdi_layer.h"
+ #include <cerrno>
++#include <cstring>
++#include <fcntl.h>
+ #include <fstream>
+ #include <libsync.h>
+ #include <securec.h>
+ #include <sstream>
+ #include <string>
++#include <sys/ioctl.h>
++#include <sys/mman.h>
+ #include <sys/time.h>
+ #include <unistd.h>
+ #include "display_buffer_vdi_impl.h"
+ #include "v1_0/display_composer_type.h"
++#include <linux/fb.h>
+ 
+ namespace OHOS {
+ namespace HDI {
+@@ -175,6 +180,94 @@ static int32_t GetFileName(char *fileName, uint32_t len, const BufferHandle *buf
+     return DISPLAY_SUCCESS;
+ }
+ 
++// Mirror incoming full-screen client layer buffers into the kernel fbdev
++// (/dev/fb1) via write(). The fbdev deferred-io path reliably reaches the host
++// scanout on this virtio-gpu setup, so the UI becomes visible on the virtual
++// display even though direct dumb-buffer scanout of imported gralloc buffers
++// does not.
++static void MirrorToFramebuffer(const BufferHandle *buffer)
++{
++    static int fbFd = -1;
++    static uint32_t fbW = 0;
++    static uint32_t fbH = 0;
++    static uint32_t fbStride = 0;
++    static uint32_t mirrorCount = 0;
++
++    if (buffer == nullptr || buffer->width < 1024 || buffer->stride <= 0) {
++        return;
++    }
++    if (fbFd < 0) {
++        if (access("/data/hdi_mirror", F_OK) != 0) {
++            return;
++        }
++        fbFd = open("/dev/fb1", O_WRONLY);
++        if (fbFd < 0) {
++            if (errno == EACCES || errno == ENOENT) {
++                static bool logged = false;
++                if (!logged) {
++                    DISPLAY_LOGE("mirror: open /dev/fb1 failed errno %{public}d", errno);
++                    logged = true;
++                }
++            }
++            return;
++        }
++        struct fb_var_screeninfo vinfo;
++        struct fb_fix_screeninfo finfo;
++        if (ioctl(fbFd, FBIOGET_VSCREENINFO, &vinfo) < 0 ||
++            ioctl(fbFd, FBIOGET_FSCREENINFO, &finfo) < 0) {
++            DISPLAY_LOGE("mirror: fb ioctl failed errno %{public}d", errno);
++            close(fbFd);
++            fbFd = -1;
++            return;
++        }
++        fbW = vinfo.xres;
++        fbH = vinfo.yres;
++        fbStride = finfo.line_length;
++        DISPLAY_LOGI("mirror: fb1 %{public}ux%{public}u stride %{public}u enabled", fbW, fbH, fbStride);
++    }
++    if (fbW == 0 || fbH == 0) {
++        return;
++    }
++    if (g_buffer == nullptr) {
++        IDisplayBufferVdi* dispBuf = new DisplayBufferVdiImpl();
++        g_buffer.reset(dispBuf);
++    }
++    void *src = g_buffer->Mmap(*const_cast<BufferHandle *>(buffer));
++    if (src == nullptr) {
++        return;
++    }
++    uint32_t copyH = std::min(static_cast<uint32_t>(buffer->height), fbH);
++    uint32_t copyWbytes = std::min(static_cast<uint32_t>(buffer->width) * 4u, fbStride);
++    const uint8_t *from = static_cast<const uint8_t *>(src);
++    if (copyWbytes == fbStride && buffer->stride == static_cast<int32_t>(fbStride)) {
++        // fast path: identical layout, single write
++        ssize_t wr = write(fbFd, from, static_cast<size_t>(copyH) * fbStride);
++        (void)wr;
++    } else {
++        for (uint32_t y = 0; y < copyH; y++) {
++            ssize_t wr = pwrite(fbFd, from + static_cast<size_t>(y) * buffer->stride,
++                copyWbytes, static_cast<off_t>(y) * fbStride);
++            (void)wr;
++        }
++    }
++    g_buffer->Unmap(*const_cast<BufferHandle *>(buffer));
++    mirrorCount++;
++    if ((mirrorCount & 0x1F) == 1) { // every 32 frames
++        DISPLAY_LOGI("mirror: wrote frame #%{public}u", mirrorCount);
++    }
++    // Poke the vt console so fbcon redraws (full-screen scroll damage). That
++    // damage is what actually pushes the shadow fb content, including the
++    // mirrored UI, through drm_fb_helper to the real scanout on this stack.
++    static int conFd = -1;
++    if (conFd < 0) {
++        conFd = open("/dev/console", O_WRONLY);
++    }
++    if (conFd >= 0) {
++        ssize_t w = write(conFd, "\n", 1);
++        (void)w;
++    }
++}
++
+ static int32_t DumpLayerBuffer(BufferHandle *buffer)
+ {
+     CHECK_NULLPOINTER_RETURN_VALUE(buffer, DISPLAY_NULL_PTR);
+@@ -216,11 +309,36 @@ int32_t HdiLayer::SetLayerBuffer(const BufferHandle *buffer, int32_t fence)
+     mHdiBuffer = std::move(layerbuffer);
+     if (fence > -1) {
+         mAcquireFence = dup(fence);
+-        // if (access("/data/hdi_dump_layer", F_OK) != -1) {
+-        //     if (DumpLayerBuffer(const_cast<BufferHandle *>(buffer)) != DISPLAY_SUCCESS) {
+-        //         DISPLAY_LOGE("dump layer buffer failed");
+-        //     }
+-        // }
++    }
++    if (access("/data/hdi_dump_layer", F_OK) != -1 && buffer->width >= 1024) {
++        if (DumpLayerBuffer(const_cast<BufferHandle *>(buffer)) != DISPLAY_SUCCESS) {
++            DISPLAY_LOGE("dump layer buffer failed");
++        }
++    }
++    MirrorToFramebuffer(buffer);
++    if (access("/data/hdi_write_layer", F_OK) != -1 && buffer->width >= 1024 && buffer->stride > 0) {
++        // diagnostic: write a B/G gradient through the mapper mapping; if it shows
++        // up on screen the commit->fb->memory link is fine and the producer write
++        // path is what is broken (and vice versa)
++        if (g_buffer == nullptr) {
++            IDisplayBufferVdi* dispBuf = new DisplayBufferVdiImpl();
++            g_buffer.reset(dispBuf);
++        }
++        void *addr = g_buffer->Mmap(*buffer);
++        if (addr != nullptr) {
++            uint32_t *px = static_cast<uint32_t *>(addr);
++            for (int32_t y = 0; y < buffer->height; y++) {
++                for (int32_t x = 0; x < buffer->width; x++) {
++                    uint32_t b = static_cast<uint32_t>(x) * 255u / static_cast<uint32_t>(buffer->width);
++                    uint32_t g = static_cast<uint32_t>(y) * 255u / static_cast<uint32_t>(buffer->height);
++                    px[static_cast<size_t>(y) * (buffer->stride / 4u) + x] = 0xFF000000u | (b << 16) | (g << 8);
++                }
++            }
++            g_buffer->Unmap(*buffer);
++            DISPLAY_LOGI("wrote gradient test pattern %{public}d x %{public}d", buffer->width, buffer->height);
++        } else {
++            DISPLAY_LOGE("gradient write: mmap failed");
++        }
+     }
+     return DISPLAY_SUCCESS;
+ }
+diff --git a/x86_general/hardware/display/src/display_device/drm/drm_plane.cpp b/x86_general/hardware/display/src/display_device/drm/drm_plane.cpp
+index 267931a..70f27b9 100644
+--- a/x86_general/hardware/display/src/display_device/drm/drm_plane.cpp
++++ b/x86_general/hardware/display/src/display_device/drm/drm_plane.cpp
+@@ -42,6 +42,30 @@ int32_t DrmPlane::Init(DrmDevice &drmDevice)
+     ret = drmDevice.GetPlaneProperty(*this, PROP_CRTC_ID, prop);
+     DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE, DISPLAY_LOGE("can not get plane prop crtc_id"));
+     mPropCrtcId = prop.propId;
++    ret = drmDevice.GetPlaneProperty(*this, PROP_SRC_X, prop);
++    DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE, DISPLAY_LOGE("can not get plane prop src_x"));
++    mPropSrcX = prop.propId;
++    ret = drmDevice.GetPlaneProperty(*this, PROP_SRC_Y, prop);
++    DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE, DISPLAY_LOGE("can not get plane prop src_y"));
++    mPropSrcY = prop.propId;
++    ret = drmDevice.GetPlaneProperty(*this, PROP_SRC_W, prop);
++    DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE, DISPLAY_LOGE("can not get plane prop src_w"));
++    mPropSrcW = prop.propId;
++    ret = drmDevice.GetPlaneProperty(*this, PROP_SRC_H, prop);
++    DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE, DISPLAY_LOGE("can not get plane prop src_h"));
++    mPropSrcH = prop.propId;
++    ret = drmDevice.GetPlaneProperty(*this, PROP_CRTC_X, prop);
++    DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE, DISPLAY_LOGE("can not get plane prop crtc_x"));
++    mPropCrtcX = prop.propId;
++    ret = drmDevice.GetPlaneProperty(*this, PROP_CRTC_Y, prop);
++    DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE, DISPLAY_LOGE("can not get plane prop crtc_y"));
++    mPropCrtcY = prop.propId;
++    ret = drmDevice.GetPlaneProperty(*this, PROP_CRTC_W, prop);
++    DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE, DISPLAY_LOGE("can not get plane prop crtc_w"));
++    mPropCrtcW = prop.propId;
++    ret = drmDevice.GetPlaneProperty(*this, PROP_CRTC_H, prop);
++    DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE, DISPLAY_LOGE("can not get plane prop crtc_h"));
++    mPropCrtcH = prop.propId;
+     ret = drmDevice.GetPlaneProperty(*this, PROP_TYPE, prop);
+     DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE, DISPLAY_LOGE("can not get plane prop type"));
+     switch (prop.value) {
+diff --git a/x86_general/hardware/display/src/display_device/drm/drm_plane.h b/x86_general/hardware/display/src/display_device/drm/drm_plane.h
+index 05ee6cb..33ca63d 100644
+--- a/x86_general/hardware/display/src/display_device/drm/drm_plane.h
++++ b/x86_general/hardware/display/src/display_device/drm/drm_plane.h
+@@ -27,6 +27,14 @@ namespace DISPLAY {
+ const std::string PROP_FBID = "FB_ID";
+ const std::string PROP_IN_FENCE_FD = "IN_FENCE_FD";
+ const std::string PROP_CRTC_ID = "CRTC_ID";
++const std::string PROP_SRC_X = "SRC_X";
++const std::string PROP_SRC_Y = "SRC_Y";
++const std::string PROP_SRC_W = "SRC_W";
++const std::string PROP_SRC_H = "SRC_H";
++const std::string PROP_CRTC_X = "CRTC_X";
++const std::string PROP_CRTC_Y = "CRTC_Y";
++const std::string PROP_CRTC_W = "CRTC_W";
++const std::string PROP_CRTC_H = "CRTC_H";
+ const std::string PROP_TYPE = "type";
+ class DrmDevice;
+ 
+@@ -51,6 +59,38 @@ public:
+     {
+         return mPropCrtcId;
+     }
++    uint32_t GetPropSrcX() const
++    {
++        return mPropSrcX;
++    }
++    uint32_t GetPropSrcY() const
++    {
++        return mPropSrcY;
++    }
++    uint32_t GetPropSrcW() const
++    {
++        return mPropSrcW;
++    }
++    uint32_t GetPropSrcH() const
++    {
++        return mPropSrcH;
++    }
++    uint32_t GetPropCrtcX() const
++    {
++        return mPropCrtcX;
++    }
++    uint32_t GetPropCrtcY() const
++    {
++        return mPropCrtcY;
++    }
++    uint32_t GetPropCrtcW() const
++    {
++        return mPropCrtcW;
++    }
++    uint32_t GetPropCrtcH() const
++    {
++        return mPropCrtcH;
++    }
+     uint32_t GetPossibleCrtcs() const
+     {
+         return mPossibleCrtcs;
+@@ -78,6 +118,14 @@ private:
+     uint32_t mPropFbId = 0;
+     uint32_t mPropFenceInId = 0;
+     uint32_t mPropCrtcId = 0;
++    uint32_t mPropSrcX = 0;
++    uint32_t mPropSrcY = 0;
++    uint32_t mPropSrcW = 0;
++    uint32_t mPropSrcH = 0;
++    uint32_t mPropCrtcX = 0;
++    uint32_t mPropCrtcY = 0;
++    uint32_t mPropCrtcW = 0;
++    uint32_t mPropCrtcH = 0;
+     uint32_t mPipe = 0;
+     uint32_t mType = 0;
+     std::vector<uint32_t> mFormats;
+diff --git a/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.cpp b/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.cpp
+index 2233a47..a14a702 100644
+--- a/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.cpp
++++ b/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.cpp
+@@ -15,6 +15,8 @@
+ 
+ #include "drm_vsync_worker.h"
+ #include <chrono>
++#include <time.h>
++#include <unistd.h>
+ #include "display_common.h"
+ #include "drm_device.h"
+ 
+@@ -73,7 +75,6 @@ bool DrmVsyncWorker::WaitSignalAndCheckRuning()
+ uint64_t DrmVsyncWorker::WaitNextVBlank(unsigned int &sq)
+ {
+     constexpr uint64_t SEC_TO_NSEC = 1000 * 1000 * 1000;
+-#if 1
+     constexpr uint64_t USEC_TO_NSEC = 1000;
+     drmVBlank vblank = {
+         .request =
+@@ -84,19 +85,30 @@ uint64_t DrmVsyncWorker::WaitNextVBlank(unsigned int &sq)
+             }
+     };
+     int ret = drmWaitVBlank(mDrmFd, &vblank);
+-    DISPLAY_CHK_RETURN((ret < 0), 0,
+-        DISPLAY_LOGE("wait vblank failed ret :　%{public}d　errno %{public}d", ret, errno));
++    if (ret < 0) {
++        // Virtual drm devices (e.g. virtio-gpu) do not implement hardware vblank:
++        // drmWaitVBlank returns immediately, which would spin this worker at full
++        // speed and feed ns=0 callbacks upstream (dropped by HdiScreen::OnVsync),
++        // freezing the frame pipeline: the composer never commits, so the screen
++        // keeps showing the initial black frame. Fall back to a software 60Hz
++        // vsync clock instead. Devices with real vblank keep the original path.
++        static bool softVsyncLogged = false;
++        if (!softVsyncLogged) {
++            DISPLAY_LOGW("drmWaitVBlank failed ret %{public}d errno %{public}d, "
++                "fall back to software 60Hz vsync", ret, errno);
++            softVsyncLogged = true;
++        }
++        constexpr useconds_t SIXTY_HZ_US = 16666; // ~60Hz
++        struct timespec current;
++        usleep(SIXTY_HZ_US);
++        clock_gettime(CLOCK_MONOTONIC, &current);
++        sq = 1;
++        return static_cast<uint64_t>(current.tv_sec) * SEC_TO_NSEC +
++            static_cast<uint64_t>(current.tv_nsec);
++    }
+     sq = vblank.reply.sequence;
+-    return static_cast<uint64_t>(vblank.reply.tval_sec * SEC_TO_NSEC + vblank.reply.tval_usec * USEC_TO_NSEC);
+-#else
+-    struct timespec current;
+-
+-    usleep(1000*16);
+-    sq = 1;
+-    clock_gettime(CLOCK_MONOTONIC, &current);
+-    return (uint64_t)(current.tv_sec * SEC_TO_NSEC + current.tv_nsec);
+-#endif
+-
++    return static_cast<uint64_t>(vblank.reply.tval_sec * SEC_TO_NSEC +
++        vblank.reply.tval_usec * USEC_TO_NSEC);
+ }
+ 
+ 
+diff --git a/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.cpp b/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.cpp
+index 7fa2b1f..88192c2 100644
+--- a/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.cpp
++++ b/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.cpp
+@@ -14,7 +14,9 @@
+  */
+ 
+ #include "hdi_drm_composition.h"
++#include <algorithm>
+ #include <cerrno>
++#include <utility>
+ #include "hdi_drm_layer.h"
+ 
+ namespace OHOS {
+@@ -84,6 +86,40 @@ int32_t HdiDrmComposition::ApplyPlane(HdiDrmLayer &layer, const DrmPlane &drmPla
+     DISPLAY_LOGD("set the crtc planeId %{public}d, propId %{public}d, crtcId %{public}d", drmPlane.GetId(),
+         drmPlane.GetPropCrtcId(), mCrtc->GetId());
+     DISPLAY_CHK_RETURN((ret < 0), DISPLAY_FAILURE, DISPLAY_LOGE("set crtc id fialed errno : %{public}d", errno));
++
++    // set plane scanout geometry (src = full client layer buffer, crtc = active mode).
++    // without these the kernel keeps a 0x0 src/crtc rect and nothing reaches the scanout.
++    if (mModeWidth == 0 || mModeHeight == 0) {
++        DrmMode mode;
++        DISPLAY_CHK_RETURN((mConnector == nullptr), DISPLAY_FAILURE, DISPLAY_LOGE("connector is nullptr"));
++        ret = mConnector->GetModeFromId(mCrtc->GetActiveModeId(), mode);
++        DISPLAY_CHK_RETURN((ret != DISPLAY_SUCCESS), DISPLAY_FAILURE,
++            DISPLAY_LOGE("can not get the mode from id %{public}d", mCrtc->GetActiveModeId()));
++        mModeWidth = static_cast<uint32_t>(mode.GetModeInfoPtr()->hdisplay);
++        mModeHeight = static_cast<uint32_t>(mode.GetModeInfoPtr()->vdisplay);
++    }
++    uint32_t srcW = mModeWidth;
++    uint32_t srcH = mModeHeight;
++    HdiLayerBuffer *layerBuffer = layer.GetCurrentBuffer();
++    if (layerBuffer != nullptr && layerBuffer->GetWidth() > 0 && layerBuffer->GetHeight() > 0) {
++        srcW = std::min(static_cast<uint32_t>(layerBuffer->GetWidth()), mModeWidth);
++        srcH = std::min(static_cast<uint32_t>(layerBuffer->GetHeight()), mModeHeight);
++    }
++    const std::pair<uint32_t, uint64_t> planeProps[] = {
++        {drmPlane.GetPropSrcX(), 0},
++        {drmPlane.GetPropSrcY(), 0},
++        {drmPlane.GetPropSrcW(), static_cast<uint64_t>(srcW) << 16}, // src_* are 16.16 fixed point
++        {drmPlane.GetPropSrcH(), static_cast<uint64_t>(srcH) << 16},
++        {drmPlane.GetPropCrtcX(), 0},
++        {drmPlane.GetPropCrtcY(), 0},
++        {drmPlane.GetPropCrtcW(), mModeWidth},
++        {drmPlane.GetPropCrtcH(), mModeHeight},
++    };
++    for (const auto &it : planeProps) {
++        ret = drmModeAtomicAddProperty(pset, drmPlane.GetId(), it.first, it.second);
++        DISPLAY_CHK_RETURN((ret < 0), DISPLAY_FAILURE,
++            DISPLAY_LOGE("set plane geom prop %{public}u failed errno : %{public}d", it.first, errno));
++    }
+     return DISPLAY_SUCCESS;
+ }
+ 
+@@ -120,6 +156,14 @@ int32_t HdiDrmComposition::UpdateMode(std::unique_ptr<DrmModeBlock> &modeBlock,
+ int32_t HdiDrmComposition::Apply(bool modeSet)
+ {
+     (void)modeSet;
++    // Mirror mode: the UI is mirrored to the kernel fbdev (/dev/fb1) by
++    // HdiLayer::SetLayerBuffer and reaches the host scanout through the fbdev
++    // damage path. Direct plane commits of the imported gralloc buffers must
++    // stay disabled here, otherwise they keep re-binding the scanout to
++    // resources whose host-side backing does not track the guest writes and
++    // the display freezes on stale content. The crtc modeset still has to run
++    // so the display pipeline activates.
++    const bool mirrorMode = (access("/data/hdi_mirror", F_OK) == 0);
+     uint64_t crtcOutFence = -1;
+     int ret;
+     std::unique_ptr<DrmModeBlock> modeBlock;
+@@ -141,7 +185,7 @@ int32_t HdiDrmComposition::Apply(bool modeSet)
+ 
+     // set the plane info.
+     DISPLAY_LOGD("mCompLayers size %{public}zd", mCompLayers.size());
+-    for (uint32_t i = 0; i < mCompLayers.size(); i++) {
++    for (uint32_t i = 0; !mirrorMode && i < mCompLayers.size(); i++) {
+         HdiDrmLayer *layer = static_cast<HdiDrmLayer *>(mCompLayers[i]);
+         const auto &drmPlane = mPlanes[i];
+         ret = ApplyPlane(*layer, *drmPlane, atomicReqPtr.Get());
+diff --git a/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.h b/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.h
+index d1ad8da..02d04bd 100644
+--- a/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.h
++++ b/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.h
+@@ -62,6 +62,8 @@ private:
+     std::vector<std::shared_ptr<DrmPlane>> mPrimPlanes;
+     std::vector<std::shared_ptr<DrmPlane>> mOverlayPlanes;
+     std::vector<std::shared_ptr<DrmPlane>> mPlanes;
++    uint32_t mModeWidth = 0; // cached active mode size for plane geometry props
++    uint32_t mModeHeight = 0;
+ };
+ } // OHOS
+ } // HDI
