@@ -1,3 +1,25 @@
+diff --git a/framework/policycoreutils/src/selinux_restorecon.c b/framework/policycoreutils/src/selinux_restorecon.c
+index 5e00d1895..e5942e7d6 100644
+--- a/framework/policycoreutils/src/selinux_restorecon.c
++++ b/framework/policycoreutils/src/selinux_restorecon.c
+@@ -55,6 +55,17 @@ static void SetFileContextsHandle(void)
+     SelinuxOptions digestOption = {SELABEL_OPT_DIGEST, (char *)1};
+     options[index++] = digestOption;
+ 
++    // No file_contexts found (products built with build_selinux=false): skip
++    // selabel_open entirely. selabel_open() without a path option fails on
++    // its compiled-in default and its partial-init cleanup (selabel_close)
++    // frees an uninitialized pointer, crashing the calling process (seen as
++    // a foundation SEGV loop at SA .so static-init time). Leave g_fcHandle
++    // NULL — RestoreconCommon() already reports that as an error.
++    if (index <= 1) {
++        selinux_log(SELINUX_ERROR, "no file_contexts available, skip selabel_open\n");
++        return;
++    }
++
+     g_fcHandle = selabel_open(SELABEL_CTX_FILE, options, index);
+     if (g_fcHandle == NULL) {
+         selinux_log(SELINUX_ERROR, "File_contexts handle open fail\n");
 diff --git a/sepolicy/base/system/file_contexts b/sepolicy/base/system/file_contexts
 index db007ed3f..2dd1f338d 100644
 --- a/sepolicy/base/system/file_contexts
