@@ -10,7 +10,7 @@
 两个版本都可以在一台普通的 x86 服务器上完成构建，并在 QEMU 里启动到锁屏界面，
 通过 hdc 抓取到内容完整的截图：
 
-![5.1 与 6.1 的锁屏截图对比](https://raw.githubusercontent.com/guoqiangqi/OpenHarmony-x86-Port/master/blog/images/snapshot-5.1-vs-6.1.png)
+![5.1 与 6.1 的锁屏截图对比](images/snapshot-5.1-vs-6.1.png)
 
 | 版本 | API | 截图全像素颜色数 | mean RGB | 验证口径 |
 |------|-----|----------------|----------|----------|
@@ -197,7 +197,7 @@ hdc file recv /data/local/tmp/x.jpeg .
 **陷阱：QEMU monitor 的 screendump 不能当判据。** 下面两张图是同一时刻、
 同一系统上抓的——左边 QEMU screendump，右边 snapshot_display：
 
-![QEMU screendump 与 snapshot_display 的对比](https://raw.githubusercontent.com/guoqiangqi/OpenHarmony-x86-Port/master/blog/images/qemu-screendump-vs-snapshot.png)
+![QEMU screendump 与 snapshot_display 的对比](images/qemu-screendump-vs-snapshot.png)
 
 原因：guest 的 composer 通过 DRM atomic 驱动 virtio-gpu 的 scanout，这条路径
 与 QEMU 显示前端的截屏不在一个平面上；即使一切正常的成品盘，QEMU 侧也只显示
