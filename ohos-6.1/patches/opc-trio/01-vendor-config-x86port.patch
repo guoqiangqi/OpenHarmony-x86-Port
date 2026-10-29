@@ -1,5 +1,5 @@
 diff --git a/x86_general/config.json b/x86_general/config.json
-index c34098a..ad43eb1 100644
+index c34098a..0acf8a6 100644
 --- a/x86_general/config.json
 +++ b/x86_general/config.json
 @@ -12,7 +12,10 @@
@@ -14,7 +14,17 @@ index c34098a..ad43eb1 100644
    "subsystems": [
      {
        "subsystem": "security",
-@@ -57,7 +60,7 @@
+@@ -51,13 +54,17 @@
+     {
+       "subsystem": "hdf",
+       "components": [
++        {
++          "component": "drivers_adapter",
++          "features": []
++        },
+         {
+           "component": "drivers_interface_ril",
+           "features": []
          },
          {
            "component": "drivers_peripheral_ril",
@@ -23,7 +33,7 @@ index c34098a..ad43eb1 100644
          },
          {
            "component": "drivers_interface_bluetooth",
-@@ -104,6 +107,9 @@
+@@ -104,6 +111,9 @@
              "hdf_core_platform_test_support = false",
              "hdf_core_default_peripheral_config = false"
            ]
@@ -33,7 +43,7 @@ index c34098a..ad43eb1 100644
          }
        ]
      },
-@@ -119,13 +125,8 @@
+@@ -119,13 +129,8 @@
        ]
      },
      {
@@ -49,7 +59,7 @@ index c34098a..ad43eb1 100644
      },
      {
        "subsystem": "msdp",
-@@ -158,7 +159,7 @@
+@@ -158,7 +163,7 @@
              "wifi_feature_non_seperate_p2p = true",
              "wifi_feature_non_hdf_driver = true",
              "wifi_feature_p2p_random_mac_addr = false"
@@ -58,7 +68,7 @@ index c34098a..ad43eb1 100644
          }
        ]
      },
-@@ -248,6 +249,15 @@
+@@ -248,6 +253,15 @@
            "features": [
              "musl_ld128_flag = false"
            ]
@@ -74,7 +84,17 @@ index c34098a..ad43eb1 100644
          }
        ]
      },
-@@ -294,11 +304,14 @@
+@@ -272,7 +286,8 @@
+           "component": "graphic_2d",
+           "features": [
+             "graphic_2d_feature_rs_enable_eglimage = true",
+-            "graphic_2d_feature_use_texgine = true"
++            "graphic_2d_feature_use_texgine = true",
++            "graphic_2d_feature_ace_enable_gpu = false"
+           ]
+         },
+         {
+@@ -294,11 +309,14 @@
          {
            "component": "vulkan-headers",
            "features": []
@@ -90,7 +110,7 @@ index c34098a..ad43eb1 100644
        "components": [
          {
            "component": "hiview",
-@@ -329,6 +342,41 @@
+@@ -329,6 +347,41 @@
            ]
          }
        ]

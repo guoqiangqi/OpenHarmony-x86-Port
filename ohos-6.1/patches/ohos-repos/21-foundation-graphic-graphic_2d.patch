@@ -50,7 +50,7 @@ index 81bcb78cf1..d431eacccc 100644
  }
 \ No newline at end of file
 diff --git a/frameworks/opengl_wrapper/src/EGL/egl_wrapper_display.cpp b/frameworks/opengl_wrapper/src/EGL/egl_wrapper_display.cpp
-index 067d78a0c7..e524eb66e7 100644
+index 067d78a0c7..5780b4e846 100644
 --- a/frameworks/opengl_wrapper/src/EGL/egl_wrapper_display.cpp
 +++ b/frameworks/opengl_wrapper/src/EGL/egl_wrapper_display.cpp
 @@ -29,6 +29,10 @@
@@ -64,7 +64,7 @@ index 067d78a0c7..e524eb66e7 100644
  
  namespace OHOS {
  static constexpr const char *VENDOR_VALUE = "OpenHarmony";
-@@ -159,6 +163,18 @@ void EglWrapperDisplay::UpdateQueryValue(EGLint *major, EGLint *minor)
+@@ -159,6 +163,24 @@ void EglWrapperDisplay::UpdateQueryValue(EGLint *major, EGLint *minor)
      }
  }
  
@@ -78,12 +78,18 @@ index 067d78a0c7..e524eb66e7 100644
 +        (void)write(fd, msg, strlen(msg));
 +        (void)close(fd);
 +    }
++    // App-sandbox processes cannot open /dev/kmsg; mirror to a file.
++    fd = open("/data/local/tmp/egl61.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
++    if (fd >= 0) {
++        (void)write(fd, msg, strlen(msg));
++        (void)close(fd);
++    }
 +}
 +
  EGLBoolean EglWrapperDisplay::Init(EGLint *major, EGLint *minor)
  {
      std::lock_guard<std::recursive_mutex> lock(refLockMutex_);
-@@ -175,6 +191,25 @@ EGLBoolean EglWrapperDisplay::Init(EGLint *major, EGLint *minor)
+@@ -175,6 +197,25 @@ EGLBoolean EglWrapperDisplay::Init(EGLint *major, EGLint *minor)
          return EGL_TRUE;
      }
  
@@ -109,7 +115,7 @@ index 067d78a0c7..e524eb66e7 100644
      ThreadPrivateDataCtl::SetGlHookTable(&gGlHookNoContext);
      EglWrapperDispatchTablePtr table = &gWrapperHook;
      table->major = -1;
-@@ -182,6 +217,10 @@ EGLBoolean EglWrapperDisplay::Init(EGLint *major, EGLint *minor)
+@@ -182,6 +223,10 @@ EGLBoolean EglWrapperDisplay::Init(EGLint *major, EGLint *minor)
      if (table->isLoad && table->egl.eglInitialize) {
          if (table->egl.eglInitialize(disp_, &table->major, &table->minor)) {
              WLOGD("initialized ver=%{public}d.%{public}d", table->major, table->minor);
@@ -134,7 +140,7 @@ index b3446f1774..fe8b354603 100644
      static void* dlglv3Handle = dlopen("/system/lib/platformsdk/libGLESv3.so", RTLD_NOW | RTLD_LOCAL);
  #endif
 diff --git a/frameworks/opengl_wrapper/src/EGL/egl_wrapper_loader.cpp b/frameworks/opengl_wrapper/src/EGL/egl_wrapper_loader.cpp
-index 46ff70effd..c66af7e0ac 100644
+index 46ff70effd..e000624573 100644
 --- a/frameworks/opengl_wrapper/src/EGL/egl_wrapper_loader.cpp
 +++ b/frameworks/opengl_wrapper/src/EGL/egl_wrapper_loader.cpp
 @@ -16,6 +16,10 @@
@@ -174,20 +180,27 @@ index 46ff70effd..c66af7e0ac 100644
  namespace OHOS {
  namespace {
  constexpr const char *LIB_EGL_NAME = "libEGL_impl.so";
-@@ -41,6 +64,21 @@ EglWrapperLoader& EglWrapperLoader::GetInstance()
+@@ -41,6 +64,28 @@ EglWrapperLoader& EglWrapperLoader::GetInstance()
      return loader;
  }
  
 +// WLOGE goes through the silent HiLogPrint stub; mirror loader failures to the
 +// kernel console so bring-up can see which dlopen/entry-point failed.
++// App-sandbox processes cannot open /dev/kmsg, so also append to a world-
++// readable file under /data/local/tmp (bring-up diagnostics only).
 +static void LoaderKmsg(const char *what, const char *name)
 +{
++    char buf[256];
++    const char *err = dlerror();
++    (void)snprintf(buf, sizeof(buf), "EGL61LOADER[%d]: %s %s failed: %s\n",
++        getpid(), what, name, (err != nullptr) ? err : "no dlerror");
 +    int fd = open("/dev/kmsg", O_WRONLY);
 +    if (fd >= 0) {
-+        char buf[256];
-+        const char *err = dlerror();
-+        (void)snprintf(buf, sizeof(buf), "EGL61LOADER[%d]: %s %s failed: %s\n",
-+            getpid(), what, name, (err != nullptr) ? err : "no dlerror");
++        (void)write(fd, buf, strlen(buf));
++        (void)close(fd);
++    }
++    fd = open("/data/local/tmp/egl61.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
++    if (fd >= 0) {
 +        (void)write(fd, buf, strlen(buf));
 +        (void)close(fd);
 +    }
@@ -196,7 +209,7 @@ index 46ff70effd..c66af7e0ac 100644
  EglWrapperLoader::~EglWrapperLoader()
  {
      WLOGD("");
-@@ -53,6 +91,7 @@ bool EglWrapperLoader::LoadEgl(const char* libName, EglHookTable* table)
+@@ -53,6 +98,7 @@ bool EglWrapperLoader::LoadEgl(const char* libName, EglHookTable* table)
      dlEglHandle_ = dlopen(libName, RTLD_NOW | RTLD_LOCAL);
      if (dlEglHandle_ == nullptr) {
          WLOGE("dlopen failed. error: %{public}s.", dlerror());
@@ -204,6 +217,125 @@ index 46ff70effd..c66af7e0ac 100644
          return false;
      }
  
+@@ -120,6 +166,7 @@ void *EglWrapperLoader::LoadGl(const char *libName, char const * const *glName,
+     dlHandle = dlopen(libName, RTLD_NOW | RTLD_LOCAL);
+     if (dlHandle == nullptr) {
+         WLOGE("dlopen failed. error: %{public}s.", dlerror());
++        LoaderKmsg("dlopen(gl)", libName);
+         return nullptr;
+     }
+ 
+@@ -152,6 +199,7 @@ void *EglWrapperLoader::LoadGl(const char *libName, char const * const *glName,
+ 
+ bool EglWrapperLoader::LoadVendorDriver(EglWrapperDispatchTable *table)
+ {
++    LoaderKmsg("enter", "LoadVendorDriver");
+ #ifdef OPENGL_WRAPPER_ENABLE_GL4
+     if (gWrapperHook.useMesa) {
+         WLOGD("EGL (mesa)");
+@@ -218,6 +266,7 @@ bool EglWrapperLoader::Load(EglWrapperDispatchTable *table)
+ 
+     if (!LoadVendorDriver(table)) {
+         WLOGE("LoadVendorDriver Failed.");
++        LoaderKmsg("result", "LoadVendorDriver");
+         return false;
+     }
+ 
+diff --git a/rosen/modules/2d_graphics/src/render_context/new_render_context/render_context_gl.cpp b/rosen/modules/2d_graphics/src/render_context/new_render_context/render_context_gl.cpp
+index 2634ffdde8..85a71eb230 100644
+--- a/rosen/modules/2d_graphics/src/render_context/new_render_context/render_context_gl.cpp
++++ b/rosen/modules/2d_graphics/src/render_context/new_render_context/render_context_gl.cpp
+@@ -29,7 +29,10 @@ namespace Rosen {
+ using GetPlatformDisplayExt = PFNEGLGETPLATFORMDISPLAYEXTPROC;
+ constexpr const char* EGL_EXT_PLATFORM_WAYLAND = "EGL_EXT_platform_wayland";
+ constexpr const char* EGL_KHR_PLATFORM_WAYLAND = "EGL_KHR_platform_wayland";
+-constexpr int32_t EGL_CONTEXT_CLIENT_VERSION_NUM = 2;
++// GLES3 (as on the 5.1 x86 port): the config asks for EGL_OPENGL_ES3_BIT, so
++// create a matching ES3 context — some drivers reject v2 contexts against
++// ES3-only configs.
++constexpr int32_t EGL_CONTEXT_CLIENT_VERSION_NUM = 3;
+ constexpr char CHARACTER_WHITESPACE = ' ';
+ constexpr const char* CHARACTER_STRING_WHITESPACE = " ";
+ constexpr const char* EGL_GET_PLATFORM_DISPLAY_EXT = "eglGetPlatformDisplayEXT";
+@@ -148,7 +151,7 @@ bool RenderContextGL::Init()
+     LOGD("Creating EGLContext!!!");
+     eglDisplay_ = GetPlatformEglDisplay(EGL_PLATFORM_OHOS_KHR, EGL_DEFAULT_DISPLAY, NULL);
+     if (eglDisplay_ == EGL_NO_DISPLAY) {
+-        LOGW("Failed to create EGLDisplay gl errno : %{public}x", eglGetError());
++        LOGE("Failed to create EGLDisplay gl errno : %{public}x", eglGetError());
+         return false;
+     }
+ 
+@@ -228,9 +231,17 @@ void RenderContextGL::CreatePbufferSurface()
+ {
+     const char* extensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+ 
+-    if ((extensions != nullptr) &&
+-        (!CheckEglExtension(extensions, EGL_KHR_SURFACELESS_CONTEXT)) &&
+-        (pbufferSurface_ == EGL_NO_SURFACE)) {
++    // The OHOS EGL wrapper only accepts its singleton display handle, so
++    // eglQueryString(EGL_NO_DISPLAY, ...) returns nullptr. That previously
++    // made this function skip pbuffer creation entirely, leaving the later
++    // eglMakeCurrent() surfaceless — surfaceless contexts are not reliably
++    // supported by every driver (kms_swrast/glGetString fails), so RenderContext
++    // ::Init() then fails and every GL client (RS + apps) renders nothing.
++    // Create the pbuffer unless surfaceless support is explicitly advertised.
++    bool surfacelessSupported = (extensions != nullptr) &&
++        CheckEglExtension(extensions, EGL_KHR_SURFACELESS_CONTEXT);
++
++    if (!surfacelessSupported && (pbufferSurface_ == EGL_NO_SURFACE)) {
+         EGLint attribs[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+         pbufferSurface_ = eglCreatePbufferSurface(eglDisplay_, config_, attribs);
+         if (pbufferSurface_ == EGL_NO_SURFACE) {
+@@ -278,7 +289,9 @@ EGLSurface RenderContextGL::CreateEGLSurface(EGLNativeWindowType eglNativeWindow
+ 
+     EGLSurface surface = eglCreateWindowSurface(eglDisplay_, config_, nativeWindow_, NULL);
+     if (surface == EGL_NO_SURFACE) {
+-        LOGW("Failed to create eglsurface!!! %{public}x", eglGetError());
++        // LOGE (not LOGW): the warning level was silently dropped from hilog,
++        // hiding the actual EGL error behind "Invalid eglSurface" upstream.
++        LOGE("Failed to create eglsurface, eglErr=0x%{public}x", eglGetError());
+         return EGL_NO_SURFACE;
+     }
+ 
+diff --git a/rosen/modules/composer/hdi_backend/src/hdi_screen.cpp b/rosen/modules/composer/hdi_backend/src/hdi_screen.cpp
+index 87b07079b9..0db20cf8bc 100644
+--- a/rosen/modules/composer/hdi_backend/src/hdi_screen.cpp
++++ b/rosen/modules/composer/hdi_backend/src/hdi_screen.cpp
+@@ -20,6 +20,10 @@
+ #include "vsync_sampler.h"
+ #include <hdf_base.h>
+ #include <rs_trace.h>
++#include <atomic>
++#include <fcntl.h>
++#include <unistd.h>
++#include <stdio.h>
+ #include <cstring>
+ #include <securec.h>
+ #include <mutex>
+@@ -60,6 +64,22 @@ void HdiScreen::OnVsync(uint32_t sequence, uint64_t ns, void *data)
+ {
+     (void)data;
+     ScopedBytrace onVsyncTrace("HdiScreen::OnVsync_" + std::to_string((ns)));
++    // Bring-up diagnostics: count delivered callbacks on the kernel console
++    // (RS is a system process and can open /dev/kmsg).
++    {
++        static std::atomic<uint64_t> vsyncCount {0};
++        uint64_t cnt = vsyncCount.fetch_add(1) + 1;
++        if (cnt == 1 || cnt % 600 == 0) { // first + once per ~10s at 60Hz
++            char kmsg[96];
++            (void)snprintf(kmsg, sizeof(kmsg), "EGL61VS[%llu]: OnVsync #%llu ns=%llu\n",
++                (unsigned long long)getpid(), (unsigned long long)cnt, (unsigned long long)ns);
++            int fd = open("/dev/kmsg", O_WRONLY);
++            if (fd >= 0) {
++                (void)write(fd, kmsg, strlen(kmsg));
++                (void)close(fd);
++            }
++        }
++    }
+     if (ns == 0) {
+         HLOGW("Vsync ns is 0, drop this callback");
+         return;
 diff --git a/rosen/modules/create_pixelmap_surface/BUILD.gn b/rosen/modules/create_pixelmap_surface/BUILD.gn
 index 7c72f86a9c..5b9e2c8de3 100644
 --- a/rosen/modules/create_pixelmap_surface/BUILD.gn
@@ -217,6 +349,23 @@ index 7c72f86a9c..5b9e2c8de3 100644
    subsystem_name = "graphic"
    part_name = "graphic_2d"
  }
+diff --git a/rosen/modules/render_service_base/src/platform/ohos/backend/rs_surface_ohos_gl.cpp b/rosen/modules/render_service_base/src/platform/ohos/backend/rs_surface_ohos_gl.cpp
+index c9ea5f10af..2972ce7e9e 100644
+--- a/rosen/modules/render_service_base/src/platform/ohos/backend/rs_surface_ohos_gl.cpp
++++ b/rosen/modules/render_service_base/src/platform/ohos/backend/rs_surface_ohos_gl.cpp
+@@ -60,6 +60,12 @@ std::unique_ptr<RSSurfaceFrame> RSSurfaceOhosGl::RequestFrame(int32_t width, int
+     context->SetPixelFormat(pixelFormat_);
+     if (mWindow == nullptr) {
+         mWindow = CreateNativeWindowFromSurface(&producer_);
++    }
++    if (mWindow != nullptr && mEglSurface == EGL_NO_SURFACE) {
++        // Retry, not create-once: the first attempt can race the async GL
++        // context initialization on RSRenderThread ("EGL context has not
++        // initialized") and would otherwise cache EGL_NO_SURFACE forever,
++        // starving the surface of frames for the whole process lifetime.
+         mEglSurface = context->CreateEGLSurface((EGLNativeWindowType)mWindow);
+         ROSEN_LOGD("RSSurfaceOhosGl: create and Init EglSurface");
+     }
 diff --git a/rosen/modules/render_service_client/core/animation/rs_transition_effect.cpp b/rosen/modules/render_service_client/core/animation/rs_transition_effect.cpp
 index f48121b27f..ca90186cbd 100644
 --- a/rosen/modules/render_service_client/core/animation/rs_transition_effect.cpp

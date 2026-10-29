@@ -269,7 +269,7 @@ index 05ee6cb..33ca63d 100644
      uint32_t mType = 0;
      std::vector<uint32_t> mFormats;
 diff --git a/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.cpp b/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.cpp
-index 2233a47..a14a702 100644
+index 2233a47..31367ab 100644
 --- a/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.cpp
 +++ b/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.cpp
 @@ -15,6 +15,8 @@
@@ -281,7 +281,37 @@ index 2233a47..a14a702 100644
  #include "display_common.h"
  #include "drm_device.h"
  
-@@ -73,7 +75,6 @@ bool DrmVsyncWorker::WaitSignalAndCheckRuning()
+@@ -28,9 +30,13 @@ int32_t DrmVsyncWorker::Init(int fd)
+     DISPLAY_CHK_RETURN((fd < 0), DISPLAY_FAILURE, DISPLAY_LOGE("the fd is invalid"));
+     mDrmFd = fd;
+     DISPLAY_LOGD("the drm fd is %{public}d", fd);
++    // Set mRunning BEFORE the thread starts: WorkThread()'s first
++    // WaitSignalAndCheckRuning() returns mRunning, so setting it after
++    // thread creation lets a fast thread observe mRunning == false and
++    // exit immediately — killing vsync for the whole boot.
++    mRunning = true;
+     mThread = std::make_unique<std::thread>([this]() { WorkThread(); });
+     DISPLAY_CHK_RETURN((mThread == nullptr), DISPLAY_FAILURE, DISPLAY_LOGE("can not create thread"));
+-    mRunning = true;
+     return DISPLAY_SUCCESS;
+ }
+ 
+@@ -65,7 +71,13 @@ DrmVsyncWorker::~DrmVsyncWorker()
+ bool DrmVsyncWorker::WaitSignalAndCheckRuning()
+ {
+     std::unique_lock<std::mutex> ul(mMutex);
+-    mCondition.wait(ul, [this]() { return (mEnable || !mRunning); });
++    // In soft-vsync mode (no hardware vblank) the worker free-runs: gating on
++    // mEnable would park the thread forever if the HDI SetVsyncEnabled(true)
++    // never arrives upstream, and RS's whole frame pipeline starves (its main
++    // thread only wakes on vsync callbacks).
++    if (!softVsyncMode_) {
++        mCondition.wait(ul, [this]() { return (mEnable || !mRunning); });
++    }
+     return mRunning;
+ }
+ 
+@@ -73,7 +85,6 @@ bool DrmVsyncWorker::WaitSignalAndCheckRuning()
  uint64_t DrmVsyncWorker::WaitNextVBlank(unsigned int &sq)
  {
      constexpr uint64_t SEC_TO_NSEC = 1000 * 1000 * 1000;
@@ -289,7 +319,7 @@ index 2233a47..a14a702 100644
      constexpr uint64_t USEC_TO_NSEC = 1000;
      drmVBlank vblank = {
          .request =
-@@ -84,19 +85,30 @@ uint64_t DrmVsyncWorker::WaitNextVBlank(unsigned int &sq)
+@@ -84,19 +95,31 @@ uint64_t DrmVsyncWorker::WaitNextVBlank(unsigned int &sq)
              }
      };
      int ret = drmWaitVBlank(mDrmFd, &vblank);
@@ -308,6 +338,7 @@ index 2233a47..a14a702 100644
 +                "fall back to software 60Hz vsync", ret, errno);
 +            softVsyncLogged = true;
 +        }
++        softVsyncMode_ = true;
 +        constexpr useconds_t SIXTY_HZ_US = 16666; // ~60Hz
 +        struct timespec current;
 +        usleep(SIXTY_HZ_US);
@@ -332,6 +363,32 @@ index 2233a47..a14a702 100644
  }
  
  
+@@ -121,6 +144,11 @@ void DrmVsyncWorker::WorkThread()
+             mCallBack->Vsync(seq, time);
+         } else {
+             DISPLAY_LOGE("the callbac is nullptr");
++            // Soft-vsync free-run would spin here at 60Hz before the HDI
++            // callback is registered; poll gently instead.
++            if (softVsyncMode_) {
++                usleep(100 * 1000); // 100ms
++            }
+         }
+     }
+ }
+diff --git a/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.h b/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.h
+index f945d1f..36931c6 100644
+--- a/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.h
++++ b/x86_general/hardware/display/src/display_device/drm/drm_vsync_worker.h
+@@ -45,6 +45,9 @@ private:
+     std::condition_variable mCondition;
+     std::shared_ptr<VsyncCallBack> mCallBack;
+     bool mRunning = false;
++    // Set once drmWaitVBlank reports unsupported: the worker then free-runs a
++    // 60Hz clock instead of waiting for EnableVsync() (see WaitSignalAndCheckRuning).
++    std::atomic<bool> softVsyncMode_ {false};
+ };
+ } // namespace OHOS
+ } // namespace HDI
 diff --git a/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.cpp b/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.cpp
 index 7fa2b1f..88192c2 100644
 --- a/x86_general/hardware/display/src/display_device/drm/hdi_drm_composition.cpp

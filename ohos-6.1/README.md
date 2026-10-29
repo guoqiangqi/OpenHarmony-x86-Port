@@ -1,10 +1,10 @@
 # OpenHarmony 6.1 (API 23) x86_general 移植构建指南
 
-> 状态（2026-10-28）：镜像可从源码完整构建并启动到用户态；内核 slub BUG、foundation
-> selabel 崩溃循环、vendor/data 分区不挂载（composer/mmi 全灭根因）、f2fs/ext4 错配、
-> hdf_devhost 缺失、hdc 握手 —— **全部已解决**（§8）；GL 已验证 `eglInitialize OK`。
-> 拼盘后必须跑 `scripts/fixup-disk.sh`（vendor 合并 + data 重格 + GL 使能）。
-> 唯一卡点：**RS 渲染循环 0 帧**（§8b）。详见文末。
+> 状态（2026-10-29）：**截图能力已达 5.1 同级** —— `hdc snapshot_display` 产出
+> **23,891 色 / mean RGB [120,158,202]**（5.1 黄金基准 23,855 色、同均值，像素级等价的
+> 锁屏 UI）；API=23 实证。内核 slub、foundation selabel 崩溃、vendor/data 挂载、
+> f2fs、hdf_devhost、hdc、app 侧 GL、软 vsync —— **全部闭环**（§8/§8b）。
+> 拼盘后必须跑 `scripts/fixup-disk.sh`（vendor 合并 + data 重格 + GL 全局使能）。
 
 ## 1. 源码获取（OHOS 本体不走 submodule，用 repo 工具）
 
@@ -149,17 +149,30 @@ bash ../common/launch_qemu.sh ./ohos_disk_61.img     # grub: root=PARTLABEL=syst
    kms_swrast/swrast/virtio_gpu_dri 别名（fixup-disk.sh [3/4]）。wrapper 侧
    v4 stubs/诊断已并入 patches/21。
 
-## 8b. 当前唯一卡点：RS 渲染循环未启动（0 帧）
+## 8b. RS 0 帧 → 已解决（2026-10-29，三层连环）
 
-一切就绪但 RS 主循环死寂：屏幕已建（RSScreen 1280x800@75、SetScreenPowerStatus On）、
-composer 线程 EGL+swrast+ShaderCache 就绪、composer_host 已分配 client target
-（dumb 1280x832 AR24）、vsync 发生器活着（~56Hz）、hdc/hidumper/fpsCount 全可用——
-但 `FrameBufferSurface` BufferQueue 恒 [0x0]/0 buffers、`RefreshRateCounts` 空、
-输入注入无任何 RS 响应。扫描输出为开机残留灰噪（0xAA 散点，偶发微变）。
-下一步方向：RSMainThread 激活条件（RequestNextVSync 已发但主线程不跑）；
-hdc 实验环境已就绪（`hidumper -s 10`、hilog、kill render_service 触发式取证法）；
-另注意 `RegScreenRefresh`/`RegDisplayVBlankIdleCallback` 在 opc HAL 上 -2
-（V1_3/1_4 入口缺失，RS 侧仅告警，但值得先在 HAL 侧补齐再回归）。
+1. **app 侧 GL 起不来（真根因）**：SystemUI/bootanimation 等 app 沙箱进程里
+   `eglInitialize` 失败 —— mesa 找不到 kms_swrast DRI 驱动（`LIBGL_DRIVERS_PATH`
+   只给了 render_service）。**修复 = graphic.cfg 的 init job 全局
+   `export LIBGL_ALWAYS_SOFTWARE 1` + `export LIBGL_DRIVERS_PATH /system/lib64`**
+   （init 的 export 会传给它拉起的所有服务）→ app 侧 GL 通，SystemUI 帧请求成功，
+   `ScreenLockWindow` BufferQueue（1280x800）在 RS 出现。
+2. **RenderContextGL 三处 5.1 同源 bug**（new_render_context/render_context_gl.cpp，
+   5.1 patch 02 修的是老文件，6.1 新文件里原样复活）：① eglQueryString(NO_DISPLAY)
+   返回 nullptr → 跳过 pbuffer 创建 → surfaceless MakeCurrent 失败（修复=无显式
+   surfaceless 声明则创建 pbuffer）② ES3 config 配 v2 context（改 CLIENT_VERSION=3）
+   ③ `RSSurfaceOhosGl::RequestFrame` 与 context 异步初始化竞态失败后被永久缓存
+   （修复=mEglSurface==NO_SURFACE 时重试）。
+3. **软 vsync worker 生命周期 bug**（drm_vsync_worker.cpp）：mRunning 在线程启动后才
+   置位（竞态可致线程即刻退出）+ 等 EnableVsync 门控（上游不调则永眠）→ 修复=先置
+   mRunning、软 vsync 模式自由运行。实证：`EGL61VS` kmsg 计数器显示 55Hz 稳定回调
+   进入 RS（OnVsync #2400 @62s）。
+
+**验证判据（重要）**：QEMU monitor screendump **从来不是**内容判据（5.1 黄金盘在
+QEMU 下同样显示 0xAA 灰噪——扫描输出不被 guest composer 驱动）；唯一判据 =
+`hdc shell snapshot_display` + `hdc file recv` + 颜色统计（≥2 万色、mean≈[120,158,202]）。
+诊断通道经验：app 沙箱打不开 /dev/kmsg、/data/local/tmp（挂载命名空间）—— RS 侧
+kmsg 可用；两套 hdc 版本（5.1=linux/18、6.1=linux/23）不能同时连（hdc kill 换台）。
 
 ## 9. 6.1 与 5.1 的关键区别（勿混淆）
 

@@ -45,15 +45,22 @@ mkfs.ext4 -F -L data "${D}p4" >/dev/null 2>&1
 mount "${D}p4" /mnt/fx-d
 mkdir -p /mnt/fx-d/local/tmp
 
-echo "== [3/4] GL enablement (graphic.cfg env + dri aliases) =="
+echo "== [3/4] GL enablement (graphic.cfg global env + dri aliases) =="
+# The env must reach EVERY EGL client process (render_service AND apps:
+# SystemUI/bootanimation run in appspawn sandboxes and cannot find the
+# kms_swrast DRI driver without LIBGL_DRIVERS_PATH — their eglInitialize
+# fails and ArkUI renders nothing). init's "export" propagates to all
+# services it spawns, so put it in the init job instead of a single
+# service's env block.
 python3 - <<'EOF'
 import json
 p='/mnt/fx-s/system/etc/init/graphic.cfg'
 c=json.load(open(p))
-for svc in c['services']:
-    if svc['name']=='render_service':
-        svc['env']=[{"name":"LIBGL_ALWAYS_SOFTWARE","value":"1"},
-                    {"name":"LIBGL_DRIVERS_PATH","value":"/system/lib64"}]
+for job in c['jobs']:
+    if job['name']=='init':
+        for a in ["export LIBGL_ALWAYS_SOFTWARE 1","export LIBGL_DRIVERS_PATH /system/lib64"]:
+            if a not in job['cmds']:
+                job['cmds'].append(a)
 json.dump(c,open(p,'w'),indent=4,ensure_ascii=False)
 EOF
 cd /mnt/fx-s/system/lib64
