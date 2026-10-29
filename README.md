@@ -22,8 +22,9 @@ README 操作。
 │                     scripts/（apply-x86-port-patches / setup-sdk / disk_assemble / fixup-disk）
 ├── common/           launch_qemu.sh / verify_snapshot.sh（两个版本通用；
 │                     verify_snapshot.sh 支持 --sdk18/--sdk23 选择对应版本的 hdc）
-└── tools/            drmprobe、eglprobe/wrapprobe（显示与 EGL 探针）、
-                      mesa-libs/（-fno-emulated-tls 修复版 mesa 库，构建方法见 5.1 补丁 05）
+├── tools/            drmprobe、eglprobe/wrapprobe（显示与 EGL 探针）、
+│                      mesa-libs/（-fno-emulated-tls 修复版 mesa 库，构建方法见 5.1 补丁 05）
+└── blog/             构建实战博文与配图（blog/build-openharmony-x86-qemu-images.md）
 ```
 
 ## 上游源码的管理方式
