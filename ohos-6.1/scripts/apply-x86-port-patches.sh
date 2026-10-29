@@ -9,7 +9,6 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)   # ohos-6.1/
 echo "== [1/6] opc trio patch.sh (fuzz) =="
 export PRODUCT_PATH=vendor/opc/x86_general DEVICE_NAME=x86_general PRODUCT_COMPANY=opc
 cd "$R/vendor/opc/x86_general/patches"
-for repo in $(cd "$HERE/patches/opc-trio" >/dev/null; echo); do :; done
 # opc's own patch.sh applies with plain patch; run it and allow partial failures
 patch -p1 --forward -d "$R/arkcompiler/runtime_core" < ./*/arkcompiler/runtime_core/*.patch 2>/dev/null || true
 bash patch.sh 2>&1 | grep -E "FAILED|error" | head -20 || true
@@ -41,7 +40,8 @@ for p in "$HERE"/patches/opc-trio/*.patch; do
         soc-display-hal-elfutils-lzma) repo=device/soc/opc ;;
         soc-display-hal-port-from-51)  repo=device/soc/opc ;;
     esac
-    git -C "$R/$repo" apply "$p" 2>/dev/null && echo "ok  $repo" || echo "skip/FAIL $repo"
+    git -C "$R/$repo" apply "$p" 2>/dev/null && echo "ok  $repo" \
+        || echo "skip/FAIL $repo (already applied, or resolve manually)"
 done
 
 echo "== [5/6] untracked files (modules_gpu/net, defconfig backup) =="
