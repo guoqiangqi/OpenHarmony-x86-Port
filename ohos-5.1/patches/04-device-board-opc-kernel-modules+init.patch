@@ -658,3 +658,16 @@ index 17f368f..7eac0cc 100755
  
  mkdir -p ${OUT_PKG_DIR}
  
+diff --git a/x86_general/kernel/configs/oh_defconfig b/x86_general/kernel/configs/oh_defconfig
+index 66918aa..537dcd2 100644
+--- a/x86_general/kernel/configs/oh_defconfig
++++ b/x86_general/kernel/configs/oh_defconfig
+@@ -11,4 +11,6 @@ CONFIG_HYPERHOLD_MEMCG=y
+ CONFIG_ZRAM_GROUP=y 
+ CONFIG_ZRAM_GROUP_DEBUG=y
+ CONFIG_ZLIST_DEBUG=y
+-CONFIG_ZRAM_GROUP_WRITEBACK=y
+\ No newline at end of file
++CONFIG_ZRAM_GROUP_WRITEBACK=y
++# HAP code-signature verification (install error 9568393 without it)
++CONFIG_FS_VERITY=y

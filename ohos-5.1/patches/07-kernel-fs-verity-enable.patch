@@ -1,0 +1,82 @@
+diff --git a/fs/verity/Makefile b/fs/verity/Makefile
+index 435559a4f..77be75869 100644
+--- a/fs/verity/Makefile
++++ b/fs/verity/Makefile
+@@ -6,6 +6,7 @@ obj-$(CONFIG_FS_VERITY) += enable.o \
+ 			   measure.o \
+ 			   open.o \
+ 			   read_metadata.o \
++			   sysfs.o \
+ 			   verify.o
+ 
+ obj-$(CONFIG_FS_VERITY_BUILTIN_SIGNATURES) += signature.o
+diff --git a/fs/verity/fsverity_private.h b/fs/verity/fsverity_private.h
+index 095b54667..182164fbc 100644
+--- a/fs/verity/fsverity_private.h
++++ b/fs/verity/fsverity_private.h
+@@ -138,6 +138,7 @@ int fsverity_verify_signature(struct fsverity_info *vi,
+ 			      const u8 *signature, size_t sig_size);
+ 
+ void __init fsverity_init_signature(void);
++void __init fsverity_init_sysfs(void);
+ #else /* !CONFIG_FS_VERITY_BUILTIN_SIGNATURES */
+ static inline int
+ fsverity_verify_signature(struct fsverity_info *vi,
+diff --git a/fs/verity/init.c b/fs/verity/init.c
+index c59156b55..1dc359943 100644
+--- a/fs/verity/init.c
++++ b/fs/verity/init.c
+@@ -63,6 +63,7 @@ static int __init fsverity_init(void)
+ 	fsverity_init_info_cache();
+ 	fsverity_init_workqueue();
+ 	fsverity_init_sysctl();
++	fsverity_init_sysfs();
+ 	fsverity_init_signature();
+ 	return 0;
+ }
+diff --git a/fs/verity/sysfs.c b/fs/verity/sysfs.c
+new file mode 100644
+index 000000000..54e410496
+--- /dev/null
++++ b/fs/verity/sysfs.c
+@@ -0,0 +1,40 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * fs/verity/sysfs.c: sysfs interface for fs-verity
++ *
++ * Minimal backport of the upstream (6.15) /sys/fs/verity interface for the
++ * 6.6 OHOS kernel: some userspace components (bundle code-signature tooling)
++ * probe this directory to decide whether fs-verity is available. The actual
++ * kernel-level detection used by OHOS 5.1 code_signature is the statx
++ * STATX_ATTR_VERITY mask, which does not depend on this file.
++ */
++#include "fsverity_private.h"
++
++#include <linux/sysfs.h>
++
++static struct kobject *fsverity_kobj;
++
++static ssize_t features_show(struct kobject *kobj,
++			     struct kobj_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf, "verity\n");
++}
++
++static struct kobj_attribute features_attr = __ATTR_RO(features);
++
++static struct attribute *fsverity_attrs[] = {
++	&features_attr.attr,
++	NULL
++};
++
++ATTRIBUTE_GROUPS(fsverity);
++
++void __init fsverity_init_sysfs(void)
++{
++	fsverity_kobj = kobject_create_and_add("verity", fs_kobj);
++	if (!fsverity_kobj)
++		panic("fsverity: failed to create /sys/fs/verity\n");
++
++	if (sysfs_create_groups(fsverity_kobj, fsverity_groups))
++		panic("fsverity: failed to create sysfs group\n");
++}

@@ -15,6 +15,7 @@
 | 04 | `04-device-board-opc-kernel-modules+init.patch` | device/board/opc | build_kernel.sh 启用 4 个内核模块的单目标联合编译（dma_buf、shmem、gpu 依次依赖）、init cfg 的加载顺序、BUILD.gn 集成 |
 | 05 | `05-mesa3d-fno-emulated-tls-build.patch` | third_party/mesa3d | x86 产品的 swrast-only 配置与构建脚本修复（panfrost 改为 swrast、去掉 LLVM） |
 | 06 | `06-kernel-accesstokenid-doublefree.patch` | kernel/linux/linux-6.6 | accesstokenid 驱动删除根节点时的悬垂指针修复（上游缺陷：把指针写回按值传入的局部参数地址，导致 g_token_perm_root 悬垂和双重释放）。5.1 用户态没有触发；6.1 不打此补丁会在开机约 557 秒出现 `BUG at mm/slub.c:448` |
+| 07 | `07-kernel-fs-verity-enable.patch` | kernel/linux/linux-6.6 | fs-verity 支持：从 6.15 回移的最小 /sys/fs/verity 接口（sysfs.c 新文件 + init 挂接）。配合补丁 04 里 oh_defconfig 的 `CONFIG_FS_VERITY=y`（内核配置开关）一起生效。官方应用签名链 HAP 安装（错误码 9568393）的内核侧依赖 |
 
 ## untracked/（新增文件，直接拷入源码树）
 
@@ -38,6 +39,7 @@ bash <本目录>/apply-emutls-flag.sh <源码树>/third_party/mesa3d   # 可重�
 cd <源码树根>
 git -C kernel/linux/linux-6.6        apply <本目录>/01-*.patch
 git -C kernel/linux/linux-6.6        apply <本目录>/06-*.patch
+git -C kernel/linux/linux-6.6        apply <本目录>/07-*.patch
 git -C foundation/graphic/graphic_2d apply <本目录>/02-*.patch
 git -C device/soc/opc                apply <本目录>/03-*.patch
 git -C device/board/opc              apply <本目录>/04-*.patch
@@ -46,6 +48,12 @@ cp -r <本目录>/untracked/modules_gpu <本目录>/untracked/modules_net device
 cp <本目录>/untracked/zz_net_setup.cfg device/board/opc/x86_general/cfg/
 cp -r <本目录>/untracked/gpu-chipsetsdk-libs device/soc/opc/x86_general/hardware/gpu/lib64/chipsetsdk
 ```
+
+启用 fs-verity 后注意两件事：内核配置变更改变了模块 ABI，4 个内核模块
+（virtio-gpu、virtio_dma_buf、drm_shmem_helper、e1000）必须与新 bzImage 一起
+重新编译；用旧分区镜像拼盘时还需给 data 分区补 ext4 verity 特性位并把
+key_enable.cfg 的 require_signatures 置 0，`../scripts/enable-fsverity-disk.sh`
+把这三步打包成了一条命令。
 
 备注：本机源码树 `/root/OpenHarmony/5.1-Release` 已包含全部改动（未 commit），
 本补丁集是它的工作区快照，用于向其他环境分发。
