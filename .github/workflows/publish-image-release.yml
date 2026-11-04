@@ -44,6 +44,11 @@ jobs:
               TITLE="OpenHarmony 5.1.0 x86_general images (20261104 Flutter graphics)"
               NOTES_KIND=flutter
               ;;
+            images-5.1.0-20261104-flutter-icd)
+              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261104-flutter-icd.tar.gz"
+              TITLE="OpenHarmony 5.1.0 x86_general images (20261104 Flutter ICD harden)"
+              NOTES_KIND=flutter_icd
+              ;;
             images-5.1.0-20261104-fsverity-codesign)
               [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261104-fsverity-codesign.tar.gz"
               TITLE="OpenHarmony 5.1.0 x86_general images (20261104 fs-verity + code_sign)"
@@ -128,7 +133,7 @@ jobs:
           - `ohos-5.1/patches/07-kernel-fs-verity-enable.patch`
           - `ohos-5.1/patches/08-code-sign-x86-statx-nr.patch`
           EOF
-          elif [ "$NOTES_KIND" = "flutter" ]; then
+          elif [ "$NOTES_KIND" = "flutter" ] || [ "$NOTES_KIND" = "flutter_icd" ]; then
             cat > "$NOTES_FILE" <<'EOF'
           ## 内容
 
@@ -136,6 +141,7 @@ jobs:
 
           相对 20261104-fsverity-codesign（Flutter 图形）：
           - SwiftShader Vulkan ICD（修 libflutter→libvulkan 空 ICD SIGSEGV）
+          - `appspawn.cfg` / vendor 双路径 ICD（应用进程可见）
           - `librender_service` SURFACE 强制 CPU blit（修 egl_no_init 下首帧白屏）
           - `persist.rosen.client_composition.enabled=1`
           - 验收：计数器 Demo 可截图（包内 `flutter_firstframe.jpeg`）
@@ -146,7 +152,8 @@ jobs:
           ## 校验
 
           ```bash
-          tar -tzf OpenHarmony-5.1.0-x86_general-images-20261104-flutter.tar.gz
+          tar -tzf OpenHarmony-5.1.0-x86_general-images-20261104-flutter-icd.tar.gz \
+            || tar -tzf OpenHarmony-5.1.0-x86_general-images-20261104-flutter.tar.gz
           md5sum -c md5.txt
           bash disk_assemble.sh ohos_disk.img
           ```
@@ -178,13 +185,9 @@ jobs:
           URL: ${{ steps.meta.outputs.url }}
           NAME: ${{ steps.meta.outputs.name }}
         run: |
-          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets \
-              --jq '.assets[].name' | grep -Fx "$NAME"; then
-            echo "Asset $NAME already on release; done"
-            exit 0
-          fi
           echo "Downloading $URL ..."
           curl -fL --retry 5 --retry-delay 5 -o "$NAME" "$URL"
           ls -lh "$NAME"
+          # Always clobber so ICD harden / rebuilds can refresh the same tag asset.
           gh release upload "$TAG" "$NAME" -R "$GITHUB_REPOSITORY" --clobber
           echo "Uploaded $NAME to $TAG"
