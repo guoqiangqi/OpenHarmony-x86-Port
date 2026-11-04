@@ -39,6 +39,11 @@ jobs:
           NAME="${{ github.event.inputs.asset_name || '' }}"
 
           case "$TAG" in
+            images-5.1.0-20261104-flutter)
+              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261104-flutter.tar.gz"
+              TITLE="OpenHarmony 5.1.0 x86_general images (20261104 Flutter graphics)"
+              NOTES_KIND=flutter
+              ;;
             images-5.1.0-20261104-fsverity-codesign)
               [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261104-fsverity-codesign.tar.gz"
               TITLE="OpenHarmony 5.1.0 x86_general images (20261104 fs-verity + code_sign)"
@@ -122,6 +127,33 @@ jobs:
 
           - `ohos-5.1/patches/07-kernel-fs-verity-enable.patch`
           - `ohos-5.1/patches/08-code-sign-x86-statx-nr.patch`
+          EOF
+          elif [ "$NOTES_KIND" = "flutter" ]; then
+            cat > "$NOTES_FILE" <<'EOF'
+          ## 内容
+
+          分区镜像包：解压后 `bash disk_assemble.sh ohos_disk.img`。
+
+          相对 20261104-fsverity-codesign（Flutter 图形）：
+          - SwiftShader Vulkan ICD（修 libflutter→libvulkan 空 ICD SIGSEGV）
+          - `librender_service` SURFACE 强制 CPU blit（修 egl_no_init 下首帧白屏）
+          - `persist.rosen.client_composition.enabled=1`
+          - 验收：计数器 Demo 可截图（包内 `flutter_firstframe.jpeg`）
+
+          详见包内 `FLUTTER-GRAPHICS.md` / `CHANGES-flutter-graphics.md` / `USAGE.md`。
+          **勿删** `/data/egl_no_init`。HAP 建议 `--enable-software-rendering`。
+
+          ## 校验
+
+          ```bash
+          tar -tzf OpenHarmony-5.1.0-x86_general-images-20261104-flutter.tar.gz
+          md5sum -c md5.txt
+          bash disk_assemble.sh ohos_disk.img
+          ```
+
+          ## 源码补丁
+
+          - `ohos-5.1/patches/09-graphic_2d-flutter-surface-forcecpu.patch`
           EOF
           else
             echo "Image package \`$NAME\` for tag \`$TAG\`." > "$NOTES_FILE"
