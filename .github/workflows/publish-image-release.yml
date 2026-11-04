@@ -1,5 +1,6 @@
 # Create a GitHub Release (with large asset) using GITHUB_TOKEN.
 # git SSH can push tags/code but cannot call the Releases HTTP API; this workflow bridges that.
+# Assets are mirrored from ryan6073/OpenHarmony-x86-Port releases (staging).
 name: Publish image release
 
 on:
@@ -11,15 +12,15 @@ on:
       tag:
         description: Release tag name
         required: true
-        default: images-5.1.0-20261104-fsverity-codesign
+        default: images-5.1.0-20261020-displayfix
       asset_url:
-        description: URL of the .tar.gz to attach
-        required: true
-        default: https://github.com/ryan6073/OpenHarmony-x86-Port/releases/download/images-5.1.0-20261104-fsverity-codesign/OpenHarmony-5.1.0-x86_general-images-20261104-fsverity-codesign.tar.gz
+        description: URL of the .tar.gz to attach (optional if tag is known)
+        required: false
+        default: ""
       asset_name:
-        description: Asset file name on the release
-        required: true
-        default: OpenHarmony-5.1.0-x86_general-images-20261104-fsverity-codesign.tar.gz
+        description: Asset file name on the release (optional if tag is known)
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -29,33 +30,75 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - name: Resolve tag / asset
+      - name: Resolve tag / asset / notes
         id: meta
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-            URL="${{ github.event.inputs.asset_url }}"
-            NAME="${{ github.event.inputs.asset_name }}"
-          else
-            TAG="${GITHUB_REF_NAME}"
-            NAME="OpenHarmony-5.1.0-x86_general-images-20261104-fsverity-codesign.tar.gz"
-            URL="https://github.com/ryan6073/OpenHarmony-x86-Port/releases/download/${TAG}/${NAME}"
-            if [ "$TAG" != "images-5.1.0-20261104-fsverity-codesign" ]; then
-              echo "No default asset mapping for tag=$TAG; use workflow_dispatch with asset_url."
-              exit 1
-            fi
-          fi
+          TAG="${{ github.event.inputs.tag || '' }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          URL="${{ github.event.inputs.asset_url || '' }}"
+          NAME="${{ github.event.inputs.asset_name || '' }}"
+
+          case "$TAG" in
+            images-5.1.0-20261104-fsverity-codesign)
+              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261104-fsverity-codesign.tar.gz"
+              TITLE="OpenHarmony 5.1.0 x86_general images (20261104 fs-verity + code_sign)"
+              NOTES_KIND=codesign
+              ;;
+            images-5.1.0-20261020-displayfix)
+              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261020-displayfix.tar.gz"
+              TITLE="OpenHarmony 5.1.0 x86_general images (20261020 displayfix)"
+              NOTES_KIND=displayfix
+              ;;
+            *)
+              if [ -z "$NAME" ] || [ -z "$URL" ]; then
+                echo "Unknown tag=$TAG; pass asset_url and asset_name via workflow_dispatch."
+                exit 1
+              fi
+              TITLE="OpenHarmony x86_general images ($TAG)"
+              NOTES_KIND=generic
+              ;;
+          esac
+          [ -n "$URL" ] || URL="https://github.com/ryan6073/OpenHarmony-x86-Port/releases/download/${TAG}/${NAME}"
+
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "notes_kind=$NOTES_KIND" >> "$GITHUB_OUTPUT"
 
       - name: Ensure release exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: ${{ steps.meta.outputs.title }}
+          NOTES_KIND: ${{ steps.meta.outputs.notes_kind }}
+          NAME: ${{ steps.meta.outputs.name }}
         run: |
           NOTES_FILE="$RUNNER_TEMP/notes.md"
-          cat > "$NOTES_FILE" <<'EOF'
+          if [ "$NOTES_KIND" = "displayfix" ]; then
+            cat > "$NOTES_FILE" <<'EOF'
+          ## 内容
+
+          分区镜像包（非整盘 `.img`，约 1.4G）：解压后执行 `bash disk_assemble.sh ohos_disk.img` 即可拼成可启动盘。
+
+          **20261020-displayfix**：截图非全黑 / 锁屏 UI 可用（QEMU 实测 65,000+ 色）。
+
+          包内含 `USAGE.md`、`disk_assemble.sh`、`final_qa.jpeg`。
+
+          ## 校验
+
+          ```bash
+          tar -tzf OpenHarmony-5.1.0-x86_general-images-20261020-displayfix.tar.gz
+          md5sum -c md5.txt
+          bash disk_assemble.sh ohos_disk.img
+          ```
+
+          ## 源码补丁
+
+          https://github.com/guoqiangqi/OpenHarmony-x86-Port （ohos-5.1 补丁 01–06 等）
+          EOF
+          elif [ "$NOTES_KIND" = "codesign" ]; then
+            cat > "$NOTES_FILE" <<'EOF'
           ## 内容
 
           分区镜像包（非整盘 `.img`，约 1.4G）：解压后执行 `bash disk_assemble.sh ohos_disk.img` 即可拼成可启动盘。
@@ -80,12 +123,19 @@ jobs:
           - `ohos-5.1/patches/07-kernel-fs-verity-enable.patch`
           - `ohos-5.1/patches/08-code-sign-x86-statx-nr.patch`
           EOF
+          else
+            echo "Image package \`$NAME\` for tag \`$TAG\`." > "$NOTES_FILE"
+          fi
+          # Drop the two-space indent that the YAML block leaves on heredoc lines.
+          sed -i 's/^  //' "$NOTES_FILE"
 
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG already exists"
           else
+            # Newer tags should not steal Latest from displayfix baseline unless intended;
+            # leave GitHub default (latest by date).
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
-              --title "OpenHarmony 5.1.0 x86_general images (20261104 fs-verity + code_sign)" \
+              --title "$TITLE" \
               --notes-file "$NOTES_FILE"
           fi
 
