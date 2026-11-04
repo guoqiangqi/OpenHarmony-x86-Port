@@ -1,0 +1,24 @@
+diff --git a/rosen/modules/render_service/core/pipeline/render_thread/rs_uni_render_util.cpp b/rosen/modules/render_service/core/pipeline/render_thread/rs_uni_render_util.cpp
+index b27dcc33f1..c544e2c078 100644
+--- a/rosen/modules/render_service/core/pipeline/render_thread/rs_uni_render_util.cpp
++++ b/rosen/modules/render_service/core/pipeline/render_thread/rs_uni_render_util.cpp
+@@ -725,6 +725,8 @@ Drawing::Matrix RSUniRenderUtil::GetMatrixOfBufferToRelRect(const RSSurfaceRende
+ BufferDrawParam RSUniRenderUtil::CreateBufferDrawParam(
+     const RSSurfaceRenderNode& node, bool forceCPU, uint32_t threadIndex, bool useRenderParams)
+ {
++    // QEMU virtio-gpu + egl_no_init: always CPU-blit producer buffers (see drawable overload).
++    forceCPU = true;
+     BufferDrawParam params;
+ 
+     auto drawable = node.GetRenderDrawable();
+@@ -784,6 +786,10 @@ BufferDrawParam RSUniRenderUtil::CreateBufferDrawParam(
+ BufferDrawParam RSUniRenderUtil::CreateBufferDrawParam(
+     const DrawableV2::RSSurfaceRenderNodeDrawable& surfaceDrawable, bool forceCPU, uint32_t threadIndex)
+ {
++    // QEMU virtio-gpu + egl_no_init: EGLImage/OES sampling yields empty textures.
++    // Always take the CPU DrawBuffer path so self-drawing surfaces (e.g. Flutter
++    // XComponent) show up in the uni-render framebuffer / snapshot_display.
++    forceCPU = true;
+     BufferDrawParam params;
+     auto& nodeParams = surfaceDrawable.GetRenderParams();
+     if (!nodeParams) {

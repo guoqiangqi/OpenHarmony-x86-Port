@@ -17,6 +17,7 @@
 | 06 | `06-kernel-accesstokenid-doublefree.patch` | kernel/linux/linux-6.6 | accesstokenid 驱动删除根节点时的悬垂指针修复（上游缺陷：把指针写回按值传入的局部参数地址，导致 g_token_perm_root 悬垂和双重释放）。5.1 用户态没有触发；6.1 不打此补丁会在开机约 557 秒出现 `BUG at mm/slub.c:448` |
 | 07 | `07-kernel-fs-verity-enable.patch` | kernel/linux/linux-6.6 | fs-verity 支持：从 6.15 回移的最小 /sys/fs/verity 接口（sysfs.c 新文件 + init 挂接）。配合补丁 04 里 oh_defconfig 的 `CONFIG_FS_VERITY=y`（内核配置开关）一起生效。官方应用签名链 HAP 安装（错误码 9568393）的内核侧依赖 |
 | 08 | `08-code-sign-x86-statx-nr.patch` | base/security/code_signature | `IsSupportFsVerity` 使用架构正确的 SYS_statx（x86_64=332）。原先经 `<asm/unistd.h>` 误用 asm-generic/aarch64 的 291，在 x86_64 上变成 `epoll_create1` → errno=22 → 安装 9568393。ioctl/FEATURE_R15 通过不能单独当作签名安装可用 |
+| 09 | `09-graphic_2d-flutter-surface-forcecpu.patch` | foundation/graphic/graphic_2d | Flutter/XComponent SURFACE 在 `/data/egl_no_init` CPU 合成下强制 `CreateBufferDrawParam(..., forceCPU=true)`，走 `DrawBuffer(CPU)` 把 producer buffer 画进 uni-render（否则 EGLImage/OES 采样为空 → 白屏）。需配合 `rosen.client_composition.enabled=1` 与 HAP `--enable-software-rendering`；说明见 `../docs/FLUTTER-GRAPHICS.md` |
 
 ## untracked/（新增文件，直接拷入源码树）
 
@@ -42,6 +43,7 @@ git -C kernel/linux/linux-6.6        apply <本目录>/01-*.patch
 git -C kernel/linux/linux-6.6        apply <本目录>/06-*.patch
 git -C kernel/linux/linux-6.6        apply <本目录>/07-*.patch
 git -C foundation/graphic/graphic_2d apply <本目录>/02-*.patch
+git -C foundation/graphic/graphic_2d apply <本目录>/09-*.patch
 git -C device/soc/opc                apply <本目录>/03-*.patch
 git -C device/board/opc              apply <本目录>/04-*.patch
 git -C third_party/mesa3d            apply <本目录>/05-*.patch
