@@ -1,0 +1,45 @@
+diff --git a/base/security/code_signature/interfaces/inner_api/code_sign_utils/include/stat_utils.h b/base/security/code_signature/interfaces/inner_api/code_sign_utils/include/stat_utils.h
+index 263fad9..ea44b1c 100644
+--- a/base/security/code_signature/interfaces/inner_api/code_sign_utils/include/stat_utils.h
++++ b/base/security/code_signature/interfaces/inner_api/code_sign_utils/include/stat_utils.h
+@@ -18,9 +18,26 @@
+ 
+ #include <string>
+ #include <unistd.h>
+-#include <asm/unistd.h>
+ #include <linux/stat.h>
+ 
++/*
++ * Do NOT use <asm/unistd.h> / asm-generic __NR_statx here.
++ * On x86_64 OHOS builds, include-path pollution can pull asm-generic
++ * (aarch64) numbering: __NR_statx=291, which is epoll_create1 on x86_64
++ * and makes IsSupportFsVerity fail with errno=22 → HAP install 9568393.
++ * Use architecture-correct numbers (x86_64 SYS_statx=332).
++ */
++#if defined(__x86_64__)
++#define CODE_SIGN_SYS_STATX 332
++#elif defined(__aarch64__)
++#define CODE_SIGN_SYS_STATX 291
++#elif defined(__arm__)
++#define CODE_SIGN_SYS_STATX 397
++#else
++#include <sys/syscall.h>
++#define CODE_SIGN_SYS_STATX SYS_statx
++#endif
++
+ namespace OHOS {
+ namespace Security {
+ namespace CodeSign {
+diff --git a/base/security/code_signature/interfaces/inner_api/code_sign_utils/src/stat_utils.cpp b/base/security/code_signature/interfaces/inner_api/code_sign_utils/src/stat_utils.cpp
+index 3ec110a..84316b9 100644
+--- a/base/security/code_signature/interfaces/inner_api/code_sign_utils/src/stat_utils.cpp
++++ b/base/security/code_signature/interfaces/inner_api/code_sign_utils/src/stat_utils.cpp
+@@ -21,7 +21,7 @@ namespace CodeSign {
+ int Statx(int dfd, const char *filename, int flags,
+     unsigned int mask, struct statx *buffer)
+ {
+-    return syscall(__NR_statx, dfd, filename, flags, mask, buffer);
++    return syscall(CODE_SIGN_SYS_STATX, dfd, filename, flags, mask, buffer);
+ }
+ }
+ }

@@ -17,7 +17,7 @@
 3. 打补丁（按顺序应用）：
    ```bash
    bash <trio>/vendor/opc/x86_general/patches/patch.sh     # opc 仓库自带
-   for p in patches/0{1,2,3,4,5,6,7}-*.patch; do git -C <对应仓库> apply $p; done
+   for p in patches/0{1,2,3,4,5,6,7,8}-*.patch; do git -C <对应仓库> apply $p; done
    cp -r patches/untracked/* <树>/device/{board,soc}/opc/...   # 见 patches/README.md
    ```
    mesa 的 `-fno-emulated-tls` 不在 git 补丁里（它注入在 meson 生成的
