@@ -5,7 +5,7 @@
 | 项 | 值 |
 |----|-----|
 | 基盘 | `ohos_disk_51_verity.img` |
-| md5 | 见同目录 `ohos_disk_51_verity.img.md5`（本轮：`37f50012d03389b4aabc5236e50c44b5`） |
+| md5 | 见同目录 `ohos_disk_51_verity.img.md5`（冻结：`c5f3bdd18837084dd67b55646d6d66fd`） |
 | 版本 | OpenHarmony **5.1.0.107** / apiversion=18 / general pc / tablet |
 | 内核 | **6.6.86** `#7 SMP PREEMPT_DYNAMIC Tue Nov 3 20:08:22 CST 2026` x86_64 |
 | 显示 | QEMU `virtio-gpu-pci` + Rosen；`/data/egl_no_init` CPU 合成兜底 |
@@ -16,13 +16,21 @@
 
 `SIGSEGV(SEGV_MAPERR)@0x30` → `libflutter.so` → `libvulkan.so` (`vkGetInstanceProcAddr` / `globalGetProcAddr`)
 
-**根因**：guest 有 Vulkan loader（`libvulkan.so`），但 **没有 ICD**。
+**根因**：guest 有 Vulkan loader（`/system/lib64/platformsdk/libvulkan.so`），但 **没有可用 ICD**（`vkCreateInstance: Found no drivers!` → 空 dispatch → SEGV）。
 
-**基盘修复（软件 Vulkan）**：
+**基盘修复（软件 Vulkan / 应用侧可见）**：
 
-1. 注入 SwiftShader ICD：`/system/lib64/libvk_swiftshader.so`
-2. ICD JSON：`/system/etc/vulkan/icd.d/vk_swiftshader_icd.json`
-3. `graphic.cfg`：`VK_ICD_FILENAMES` + `render_service` env 同步
+1. SwiftShader：`/system/lib64/libvk_swiftshader.so`（并复制 `/vendor/lib64/libvk_swiftshader.so`）
+2. ICD JSON：
+   - `/system/etc/vulkan/icd.d/vk_swiftshader_icd.json` → `library_path=/system/lib64/libvk_swiftshader.so`
+   - `/vendor/etc/vulkan/icd.d/vk_swiftshader_icd.json` → `library_path=/vendor/lib64/libvk_swiftshader.so`（沙箱 `app-base` 已 bind `/vendor/etc/vulkan`）
+3. `graphic.cfg`：`export VK_ICD_FILENAMES /system/etc/vulkan/icd.d/vk_swiftshader_icd.json` + `render_service` env
+4. **`appspawn.cfg` service env**（加固应用进程继承）：
+   - `VK_ICD_FILENAMES=/system/etc/vulkan/icd.d/vk_swiftshader_icd.json`
+   - `LIBGL_DRIVERS_PATH=/system/lib64/dri`
+   - `LIBGL_ALWAYS_SOFTWARE=1`
+
+实测：应用进程 `/proc/<pid>/environ` 已含 `VK_ICD_FILENAMES`；在应用 mount ns 内 `vk_probe2` → `CreateInstance r=0`、`physdev count=2`。隐藏 ICD 时可复现 `Found no drivers!` / `CreateInstance r=-9`。
 
 ## 首帧可截图（本轮关键）
 
@@ -40,16 +48,17 @@
 | `rosen.client_composition.enabled=1`（已 `persist.rosen.client_composition.enabled=1`） | 强制 client composition，避免仅 HWC 挖洞 |
 | Flutter HAP：`--enable-software-rendering` | 引擎走 `OhosSurfaceSoftware`，把 Skia 帧 `RequestBuffer`/`FlushBuffer` 写入 NativeWindow（不依赖 app EGL） |
 
-参考截图：`vulkan-soft/flutter_hello_firstframe.jpeg`（Demo Home Page + DEBUG 角标 + FAB）。
+参考截图：`vulkan-soft/flutter_icd_softsurf2.jpeg`（Demo Home Page + DEBUG 角标 + FAB）。
 
 ## 额外图形相关补丁（累计）
 
 | 补丁 | 作用 |
 |------|------|
 | `/data/egl_no_init` | 强制 RS 跳过 `eglInitialize`（virtio-gpu EGL 写 dumb buffer 会丢像素）；**去掉会导致整屏黑屏** |
-| `LIBGL_ALWAYS_SOFTWARE=1` + `LIBGL_DRIVERS_PATH` | RS / Mesa softpipe\|swrast |
+| `LIBGL_ALWAYS_SOFTWARE=1` + `LIBGL_DRIVERS_PATH` | RS / Mesa softpipe\|swrast；appspawn 同步注入 |
 | `ld-musl-namespace-x86_64.ini` + `dri/tls/*` | app 进程可加载 Mesa dri |
 | `librender_service.z.so` forceCPU | Flutter/XComponent SURFACE 首帧可截图 |
+| vendor ICD + `libvk_swiftshader.so` | 双路径兜底，避免仅 system 扫描失败 |
 
 ## 可复制启用步骤（评测 skill）
 
@@ -57,15 +66,18 @@
 
 ```bash
 hdc shell 'test -f /data/egl_no_init && echo egl_no_init_ok'
-hdc shell 'param get rosen.client_composition.enabled'   # 期望 1
-hdc shell 'ls -l /system/lib64/libvk_swiftshader.so /system/etc/vulkan/icd.d/'
-hdc install hello_world-signed.hap   # 含 x86_64 libflutter.so；建议带 --enable-software-rendering
+hdc shell 'param get persist.rosen.client_composition.enabled'   # 期望 1
+hdc shell 'ls -l /system/lib64/libvk_swiftshader.so /vendor/lib64/libvk_swiftshader.so /system/etc/vulkan/icd.d/ /vendor/etc/vulkan/icd.d/'
+hdc shell 'grep VK_ICD /system/etc/init/graphic.cfg /system/etc/init/appspawn.cfg'
+# 建议使用带 --enable-software-rendering 的 HAP（如 hello_world-softsurf-signed.hap）
+hdc install hello_world-softsurf-signed.hap
 hdc shell 'aa start -a EntryAbility -b com.example.hello_world'
 sleep 30
 hdc shell 'pidof com.example.hello_world'
 hdc shell 'snapshot_display -f /data/local/tmp/ss.jpeg'
 hdc file recv /data/local/tmp/ss.jpeg ./ss.jpeg
 # faultlogger 不应出现 libflutter+libvulkan 同栈 cppcrash
+# hilog 不应再刷 vkCreateInstance: Found no drivers!
 ```
 
 HAP 侧启用软件渲染（embedding `FlutterLoader.ensureInitializationComplete`）：
@@ -74,6 +86,12 @@ HAP 侧启用软件渲染（embedding `FlutterLoader.ensureInitializationComplet
 shellArgs.push("--enable-software-rendering");
 ```
 
+## md5 说明
+
+- **仅在 QEMU 完全停止后**对 `ohos_disk_51_verity.img` 做 `md5sum`；运行中整盘持续写入，md5 必然变化。
+- 旧文档里的 `37f50012…` / 运行中记录的 `9e4df884…` 都不是冻结交付值；以停机后写入的 `ohos_disk_51_verity.img.md5` 为准。
+- scp 传输出错不会改 md5；「本机与评测侧不一致」优先查是否对 **仍在运行的盘** 算了哈希。
+
 ## 验收对照（本机构实测）
 
 | 标准 | 结果 |
@@ -81,14 +99,17 @@ shellArgs.push("--enable-software-rendering");
 | hdc install 成功 | **通过** |
 | aa start 成功 | **通过** |
 | 进程存活 ≥30s | **通过** |
-| faultlogger 无 libflutter+libvulkan 同栈 cppcrash | **通过** |
-| hdc screenshot 见 Flutter UI（计数器 Demo） | **通过** |
+| faultlogger 无 libflutter+libvulkan 同栈 cppcrash | **通过**（ICD 在位） |
+| 应用 environ 含 `VK_ICD_FILENAMES` | **通过** |
+| 应用 mount ns 内 Vulkan CreateInstance | **通过** |
+| hdc screenshot 见 Flutter UI（计数器 Demo） | **通过**（softsurf HAP） |
 
 ## 残留说明
 
 - `RegisterBuffer ... is not supported` / `SetMetadata -5` 仍可能刷屏，对首帧 CPU blit **非阻断**
 - 去掉 `egl_no_init` 仍会导致黑屏（GL→dumb 丢像素）；勿在评测中移除
-- Impeller / 真 Vulkan WSI 未作为本盘默认路径
+- Impeller / 真 Vulkan WSI 未作为本盘默认路径；无 `--enable-software-rendering` 的 HAP 走 `OhosSurfaceGLSkia`，在本栈可能白屏但仍不应因空 ICD SEGV
+- `/data` 空间紧张时大 HAP 会 `9568288`（磁盘不足）；先 `bm uninstall` / 清 `/data/local/tmp/*.hap`
 
 ## 非目标（已满足）
 
