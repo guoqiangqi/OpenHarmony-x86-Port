@@ -1,0 +1,101 @@
+{
+    "jobs": [
+        {
+            "name": "init",
+            "cmds": [
+                "chmod 666 /dev/mali0",
+                "chown system graphics /dev/mali0",
+                "mkdir /data/service/el0/render_service 0711 graphics graphics",
+                "mkdir /data/system 0771 system system",
+                "mkdir /data/system/RTShaderCache 0770 system system",
+                "mkdir /data/local 0751 root root",
+                "mkdir /data/local/shader_cache 0711 root root",
+                "mkdir /data/local/shader_cache/local 0711 root root",
+                "mkdir /data/local/shader_cache/local/system 0771 system system",
+                "export LIBGL_DRIVERS_PATH /system/lib64/dri",
+                "export VK_ICD_FILENAMES /system/etc/vulkan/icd.d/vk_swiftshader_icd.json",
+                "setparam VK_ICD_FILENAMES /system/etc/vulkan/icd.d/vk_swiftshader_icd.json",
+                "setparam VK_DRIVER_FILES /system/etc/vulkan/icd.d/vk_swiftshader_icd.json"
+            ]
+        },
+        {
+            "name": "services:restartrender_service",
+            "cmds": []
+        }
+    ],
+    "services": [
+        {
+            "name": "render_service",
+            "path": [
+                "/system/bin/render_service"
+            ],
+            "env": [
+                {
+                    "name": "LD_PRELOAD",
+                    "value": "/system/lib64/libdfmalloc.z.so"
+                },
+                {
+                    "name": "LIBGL_ALWAYS_SOFTWARE",
+                    "value": "1"
+                },
+                {
+                    "name": "LIBGL_DRIVERS_PATH",
+                    "value": "/system/lib64/dri"
+                },
+                {
+                    "name": "VK_ICD_FILENAMES",
+                    "value": "/system/etc/vulkan/icd.d/vk_swiftshader_icd.json"
+                }
+            ],
+            "critical": [
+                1,
+                5,
+                60
+            ],
+            "importance": -20,
+            "uid": "graphics",
+            "gid": [
+                "system",
+                "tp_host",
+                "data_reserve",
+                "dev_dma_heap"
+            ],
+            "writepid": [
+                "/dev/memcg/perf_sensitive/cgroup.procs"
+            ],
+            "caps": [
+                "SYS_NICE"
+            ],
+            "bootevents": [
+                "bootevent.renderservice.ready"
+            ],
+            "permission": [
+                "ohos.permission.REPORT_RESOURCE_SCHEDULE_EVENT",
+                "ohos.permission.MANAGE_SETTINGS"
+            ],
+            "secon": "u:r:render_service:s0",
+            "jobs": {
+                "on-restart": "services:restartrender_service"
+            },
+            "once": 0
+        },
+        {
+            "name": "bootanimation",
+            "path": [
+                "/system/bin/bootanimation"
+            ],
+            "bootevents": [
+                "bootevent.bootanimation.started",
+                "bootevent.bootanimation.finished"
+            ],
+            "importance": -20,
+            "once": 1,
+            "uid": "graphics",
+            "gid": [
+                "graphics",
+                "data_reserve"
+            ],
+            "secon": "u:r:bootanimation:s0"
+        }
+    ]
+}

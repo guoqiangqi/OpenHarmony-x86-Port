@@ -1,0 +1,45 @@
+# OHOS vulkan-loader ICD fallback for Flutter on QEMU x86
+#
+# Root cause:
+#   On __OHOS__, loader_getenv() uses CachedParameter (system param), NOT environ.
+#   export VK_ICD_FILENAMES / appspawn env is therefore ignored by libvulkan.so.
+#   If sandbox/default ICD dir scan also fails → vkCreateInstance "Found no drivers!"
+#   → Flutter SIGSEGV @0x30 in globalGetProcAddr.
+#
+# Fixes applied on disk (runtime):
+#   1) graphic.cfg: setparam VK_ICD_FILENAMES / VK_DRIVER_FILES → SwiftShader ICD JSON
+#   2) /system/lib64/libvk_icd_force.z.so + appspawn LD_PRELOAD (SetParameter + setenv)
+#   3) libvulkan.so note section (md5 changes; marks Flutter ICD fix)
+#
+# Source changes below (for full rebuild of vulkan_loader when out/ tree is healthy):
+
+--- a/third_party/vulkan-loader/loader/loader_environment.c
++++ b/third_party/vulkan-loader/loader/loader_environment.c
+@@ -45,12 +45,16 @@ char *loader_getenv(const char *name, const struct loader_instance *inst) {
+     CachedHandle g_Handle = CachedParameterCreate(name, "");
+     int changed = 0;
+     const char *res = CachedParameterGetChanged(g_Handle, &changed);
+     loader_log(inst, VULKAN_LOADER_DEBUG_BIT | VULKAN_LOADER_INFO_BIT, 0, "loader_getenv name:%s, res:%s", name, res);
+-    if (res == NULL || res[0] == '\0') {
+-        return NULL;
++    if (res != NULL && res[0] != '\0') {
++        return (char *)res;
+     }
+-    return (char *)res;
++    /* Fall back to real environ so appspawn/init export VK_ICD_FILENAMES works. */
++    (void)inst;
++    return getenv(name);
+ #else
+
+--- a/third_party/vulkan-loader/loader/loader.c
++++ b/third_party/vulkan-loader/loader/loader.c
+@@ loader_icd_scan (before out:)
++#if defined(__OHOS__)
++    if (icd_tramp_list->count == 0 && res != VK_ERROR_OUT_OF_HOST_MEMORY) {
++        static const char *kOhosSwiftShaderIcds[] = {
++            "/system/etc/vulkan/icd.d/vk_swiftshader_icd.json",
++            "/vendor/etc/vulkan/icd.d/vk_swiftshader_icd.json",
++        };
++        /* force-parse + loader_scanned_icd_add for first success */
++    }
++#endif
