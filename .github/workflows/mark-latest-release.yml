@@ -1,0 +1,23 @@
+name: Mark latest release
+on:
+  push:
+    paths:
+      - ".github/workflows/mark-latest-release.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to mark as latest
+        required: true
+        default: images-5.1.0-20261104-fsverity-codesign
+
+permissions:
+  contents: write
+
+jobs:
+  mark:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || 'images-5.1.0-20261104-fsverity-codesign' }}
+        run: gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --latest
