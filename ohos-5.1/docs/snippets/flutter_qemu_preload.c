@@ -52,12 +52,30 @@
  *
  * New patch site: vaddr 0x37bca8 (file offset 0x37aca8), the 14-byte
  * cmp/je/cmp context around the Vulkan-config constructor branch.
+ *
+ * Second patch site: vaddr 0x4a2500 (file offset 0x4a1500). This is a
+ * DisplayList dispatch-table entry whose whole body is the fatal
+ * "Check failed: false." at dl_sk_dispatcher.cc(328) (the Skia backend
+ * throwing on an op it must not receive — reached on first frame in
+ * XCom 3.9.2 ohos_x64). The thunk has no rel32 callers; it is only
+ * referenced from the op table. Rewriting its first byte to `ret` turns
+ * the op into a harmless no-op so rasterization continues instead of
+ * FML-killing the raster thread (which wedges first-frame delivery and
+ * makes the watchdog flag FlutterUiThread as not alive).
  */
 
 #define LOG_PATH "/data/log/flpatch.log"
 #define VADDR_OFF 0x37bca8u   /* virtual address of the backend-selection cmp/je */
 #define FILE_OFF 0x37aca8u    /* file offset of the same instruction           */
 #define WATCH_TICKS 12000     /* x 5 ms = 60 s */
+
+/* fatal-check thunk (dl_sk_dispatcher.cc:328) start: push rbx; sub rsp,0x120 */
+static const unsigned char fatal_expected[8] = {
+    0x53, 0x48, 0x81, 0xec, 0x20, 0x01, 0x00, 0x00
+};
+static const unsigned char fatal_ret[8] = {
+    0xc3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+};
 
 typedef void *(*DlopenFn)(const char *, int);
 typedef pid_t (*ForkFn)(void);
@@ -138,14 +156,40 @@ static int patch_fd(int fd, uintptr_t addr, int log_fail)
     return 0;
 }
 
+/* Neutralize the dl_sk_dispatcher fatal-check thunk (see header). */
+static int patch_fatal_thunk(int fd, uintptr_t addr)
+{
+    unsigned char cur[8];
+    ssize_t r, w;
+
+    r = pread(fd, cur, sizeof(cur), (off_t)addr);
+    if (r != (ssize_t)sizeof(cur))
+        return 0;
+    if (memcmp(cur, fatal_ret, sizeof(fatal_ret)) == 0)
+        return 1; /* already neutralized */
+    if (memcmp(cur, fatal_expected, sizeof(fatal_expected)) != 0)
+        return 0;
+    w = pwrite(fd, fatal_ret, sizeof(fatal_ret), (off_t)addr);
+    if (w != (ssize_t)sizeof(fatal_ret))
+        return 0;
+    r = pread(fd, cur, sizeof(cur), (off_t)addr);
+    if (r == (ssize_t)sizeof(cur) &&
+        memcmp(cur, fatal_ret, sizeof(fatal_ret)) == 0) {
+        log_line("FATAL-THUNK-NEUTRALIZED addr=0x%lx", (unsigned long)addr);
+        return 1;
+    }
+    return 0;
+}
+
 #define MAX_CANDIDATES 8
 
 /*
- * Enumerate candidate addresses of the dispatch instruction from the
- * libflutter.so mappings of `pid`. Uses FILE_OFF arithmetic (see header
- * comment). Returns candidate count.
+ * Enumerate libflutter.so mappings of `pid`. For each mapping yields
+ * (seg_start, seg_off) so every patch site can compute
+ * site_addr = seg_start + (SITE_FILE_OFF - seg_off). Returns count.
  */
-static int candidates_of(pid_t pid, uintptr_t *out, int max)
+static int candidates_of(pid_t pid, uintptr_t *out, uintptr_t *out_off,
+                         int max)
 {
     char path[64];
     char line[1024];
@@ -166,50 +210,100 @@ static int candidates_of(pid_t pid, uintptr_t *out, int max)
             continue;
         if (start < 0x10000)
             continue;
+        if (perms[2] != 'x')          /* patch sites live in exec segment */
+            continue;
         {
-            uintptr_t addr;
-            if (offset == 0)
-                addr = (uintptr_t)start + FILE_OFF; /* whole-file mapping */
-            else if (offset <= FILE_OFF)
-                addr = (uintptr_t)start + (FILE_OFF - offset);
-            else
-                continue;
-            if (addr < (uintptr_t)start || addr >= (uintptr_t)end)
-                continue;
             int dup = 0;
             for (int i = 0; i < n; i++)
-                if (out[i] == addr) { dup = 1; break; }
-            if (!dup && n < max)
-                out[n++] = addr;
+                if (out[i] == (uintptr_t)start) { dup = 1; break; }
+            if (!dup && n < max) {
+                out[n] = (uintptr_t)start;      /* segment base */
+                out_off[n] = (uintptr_t)offset; /* its file offset */
+                n++;
+            }
         }
     }
     fclose(fp);
     return n;
 }
 
+/* Address of a patch site inside mapping (seg_start, seg_off). */
+static uintptr_t site_addr(uintptr_t seg_start, uintptr_t seg_off,
+                           uintptr_t site_file_off)
+{
+    if (seg_off == 0)
+        return seg_start + site_file_off; /* whole-file mapping */
+    if (seg_off <= site_file_off)
+        return seg_start + (site_file_off - seg_off);
+    return 0; /* site not inside this mapping */
+}
+
+/* Apply every libflutter patch site (backend re-route + fatal thunk). */
+static void apply_all_patches(pid_t pid)
+{
+    uintptr_t seg[MAX_CANDIDATES];
+    uintptr_t seg_off[MAX_CANDIDATES];
+    char path[64];
+    int fd, n, i, routed = 0, thunked = 0;
+
+    n = candidates_of(pid, seg, seg_off, MAX_CANDIDATES);
+    if (n <= 0)
+        return;
+    snprintf(path, sizeof(path), "/proc/%d/mem", (int)pid);
+    fd = open(path, O_RDWR);
+    if (fd < 0)
+        return;
+    for (i = 0; i < n; i++) {
+        uintptr_t a;
+        if (!routed) {
+            a = site_addr(seg[i], seg_off[i], FILE_OFF);
+            if (a && patch_fd(fd, a, pid == getpid()))
+                routed = 1;
+        }
+        if (!thunked) {
+            a = site_addr(seg[i], seg_off[i], 0x4a1500u);
+            if (a && patch_fatal_thunk(fd, a))
+                thunked = 1;
+        }
+    }
+    close(fd);
+}
+
 /* ---- in-process watcher ------------------------------------------- */
 
 static void *self_watcher(void *unused)
 {
-    uintptr_t cand[MAX_CANDIDATES];
-    int fd, n, i;
     long t0 = now_ms();
 
     (void)unused;
     for (int tick = 0; tick < WATCH_TICKS; tick++) {
-        n = candidates_of(getpid(), cand, MAX_CANDIDATES);
+        uintptr_t seg[MAX_CANDIDATES];
+        uintptr_t seg_off[MAX_CANDIDATES];
+        int fd, n, i, routed = 0, thunked = 0;
+
+        n = candidates_of(getpid(), seg, seg_off, MAX_CANDIDATES);
         if (n > 0) {
             fd = open("/proc/self/mem", O_RDWR);
             if (fd >= 0) {
                 for (i = 0; i < n; i++) {
-                    if (patch_fd(fd, cand[i], 1)) {
-                        close(fd);
-                        log_line("self watcher: done after %ld ms",
-                                 now_ms() - t0);
-                        return NULL;
+                    uintptr_t a;
+                    if (!routed) {
+                        a = site_addr(seg[i], seg_off[i], FILE_OFF);
+                        if (a && patch_fd(fd, a, 1))
+                            routed = 1;
+                    }
+                    if (!thunked) {
+                        a = site_addr(seg[i], seg_off[i], 0x4a1500u);
+                        if (a && patch_fatal_thunk(fd, a))
+                            thunked = 1;
                     }
                 }
                 close(fd);
+                if (routed && thunked) {
+                    log_line("self watcher: done after %ld ms",
+                             now_ms() - t0);
+                    return NULL;
+                }
             }
         }
         usleep(5000);
@@ -254,11 +348,12 @@ pid_t fork(void)
 
 static int try_patch_process(pid_t pid)
 {
-    uintptr_t cand[MAX_CANDIDATES];
+    uintptr_t seg[MAX_CANDIDATES];
+    uintptr_t seg_off[MAX_CANDIDATES];
     char path[64];
     int fd, n, i;
 
-    n = candidates_of(pid, cand, MAX_CANDIDATES);
+    n = candidates_of(pid, seg, seg_off, MAX_CANDIDATES);
     if (n <= 0)
         return 0;
     snprintf(path, sizeof(path), "/proc/%d/mem", (int)pid);
@@ -266,7 +361,8 @@ static int try_patch_process(pid_t pid)
     if (fd < 0)
         return 0;
     for (i = 0; i < n; i++) {
-        if (patch_fd(fd, cand[i], 0)) {
+        uintptr_t a = site_addr(seg[i], seg_off[i], FILE_OFF);
+        if (a && patch_fd(fd, a, 0)) {
             close(fd);
             return 1;
         }
@@ -299,7 +395,8 @@ static void *scanner(void *unused)
                 int pid = is_pid_dir(d);
                 if (pid)
                     (void)try_patch_process((pid_t)pid);
-            }
+                if (pid)
+                    (void)apply_all_patches((pid_t)pid);            }
             closedir(dir);
         }
         usleep(50000);
