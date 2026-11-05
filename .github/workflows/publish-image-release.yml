@@ -39,6 +39,11 @@ jobs:
           NAME="${{ github.event.inputs.asset_name || '' }}"
 
           case "$TAG" in
+            images-5.1.0-20261105-flutter-v2)
+              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261105-flutter-v2.tar.gz"
+              TITLE="OpenHarmony 5.1.0 x86_general images (20261105 Flutter first-frame fix)"
+              NOTES_KIND=flutter_engine
+              ;;
             images-5.1.0-20261105-flutter)
               [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261105-flutter.tar.gz"
               TITLE="OpenHarmony 5.1.0 x86_general images (20261105 Flutter engine patch)"
