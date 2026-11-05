@@ -27,6 +27,7 @@
 | `modules_net/` | device/board/opc/x86_general/ | e1000.ko 打包 |
 | `zz_net_setup.cfg` | device/board/opc/x86_general/cfg/ | 网络固化配置 |
 | `gpu-chipsetsdk-libs/` | device/soc/opc/x86_general/hardware/gpu/lib64/chipsetsdk/ | 重编后的 mesa impl 库（二进制，也可从 ../../tools/mesa-libs/ 获取） |
+| `flutter-preload/` | system/lib64/（直接放盘） | 评测 HAP 运行时修复二进制：`libvk_icd_force.z.so`（引擎改道补丁，LD_PRELOAD 进 appspawn）+ `libscreenlock_bypass.z.so`（锁屏旁路，LD_PRELOAD 进 foundation）。源码见 `../docs/snippets/flutter_qemu_preload.c` / `screenlock_bypass.c`，原理见 `../docs/FLUTTER-GRAPHICS.md` |
 
 ## 应用方法
 

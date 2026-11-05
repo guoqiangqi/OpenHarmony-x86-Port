@@ -39,15 +39,15 @@ jobs:
           NAME="${{ github.event.inputs.asset_name || '' }}"
 
           case "$TAG" in
+            images-5.1.0-20261105-flutter)
+              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261105-flutter.tar.gz"
+              TITLE="OpenHarmony 5.1.0 x86_general images (20261105 Flutter engine patch)"
+              NOTES_KIND=flutter_engine
+              ;;
             images-5.1.0-20261104-flutter)
               [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261104-flutter.tar.gz"
               TITLE="OpenHarmony 5.1.0 x86_general images (20261104 Flutter graphics)"
               NOTES_KIND=flutter
-              ;;
-            images-5.1.0-20261104-flutter-icd)
-              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261104-flutter-icd.tar.gz"
-              TITLE="OpenHarmony 5.1.0 x86_general images (20261104 Flutter ICD harden)"
-              NOTES_KIND=flutter_icd
               ;;
             images-5.1.0-20261104-fsverity-codesign)
               [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261104-fsverity-codesign.tar.gz"
@@ -133,7 +133,40 @@ jobs:
           - `ohos-5.1/patches/07-kernel-fs-verity-enable.patch`
           - `ohos-5.1/patches/08-code-sign-x86-statx-nr.patch`
           EOF
-          elif [ "$NOTES_KIND" = "flutter" ] || [ "$NOTES_KIND" = "flutter_icd" ]; then
+          elif [ "$NOTES_KIND" = "flutter_engine" ]; then
+            cat > "$NOTES_FILE" <<'EOF'
+          ## 内容
+
+          分区镜像包：解压后 `bash disk_assemble.sh ohos_disk.img`。
+
+          相对 20261104 各轮（Flutter 评测 HAP 修复）：
+          - **libflutter.so 运行时改道补丁**（`libvk_icd_force.z.so` LD_PRELOAD 进 appspawn）：
+            Impeller Vulkan → 内建 Skia GL，评测 release HAP 不再 `SIGSEGV@0x30`
+          - **锁屏旁路**（`libscreenlock_bypass.z.so` LD_PRELOAD 进 foundation）：
+            修 PC 形态 `aa start` 必现 10106102
+          - `persist.appspawn.reqMgr.timeout 60` 固化
+          - 验收：进程存活 ≥30s、窗口持焦、Flutter 蓝 UI 渲染（包内 `flutter_firstframe.jpeg`）
+
+          详见包内 `FLUTTER-GRAPHICS.md` / `CHANGES-flutter-graphics.md` / `USAGE.md`。
+
+          ## 校验
+
+          ```bash
+          tar -tzf OpenHarmony-5.1.0-x86_general-images-20261105-flutter.tar.gz
+          md5sum -c md5.txt
+          bash disk_assemble.sh ohos_disk.img
+          hdc install hello_world-signed-release.hap
+          hdc shell 'aa start -a EntryAbility -b io.flutter.examples.hello_world'
+          sleep 30 && hdc shell 'tail -3 /data/log/flpatch.log'  # PATCHED
+          ```
+
+          ## 源码
+
+          - `ohos-5.1/docs/snippets/flutter_qemu_preload.c`
+          - `ohos-5.1/docs/snippets/screenlock_bypass.c`
+          - `ohos-5.1/docs/FLUTTER-GRAPHICS.md`（原理与排障记录）
+          EOF
+          elif [ "$NOTES_KIND" = "flutter" ]; then
             cat > "$NOTES_FILE" <<'EOF'
           ## 内容
 
@@ -141,7 +174,6 @@ jobs:
 
           相对 20261104-fsverity-codesign（Flutter 图形）：
           - SwiftShader Vulkan ICD（修 libflutter→libvulkan 空 ICD SIGSEGV）
-          - `appspawn.cfg` / vendor 双路径 ICD（应用进程可见）
           - `librender_service` SURFACE 强制 CPU blit（修 egl_no_init 下首帧白屏）
           - `persist.rosen.client_composition.enabled=1`
           - 验收：计数器 Demo 可截图（包内 `flutter_firstframe.jpeg`）
@@ -152,8 +184,7 @@ jobs:
           ## 校验
 
           ```bash
-          tar -tzf OpenHarmony-5.1.0-x86_general-images-20261104-flutter-icd.tar.gz \
-            || tar -tzf OpenHarmony-5.1.0-x86_general-images-20261104-flutter.tar.gz
+          tar -tzf OpenHarmony-5.1.0-x86_general-images-20261104-flutter.tar.gz
           md5sum -c md5.txt
           bash disk_assemble.sh ohos_disk.img
           ```
@@ -185,9 +216,13 @@ jobs:
           URL: ${{ steps.meta.outputs.url }}
           NAME: ${{ steps.meta.outputs.name }}
         run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name' | grep -Fx "$NAME"; then
+            echo "Asset $NAME already on release; done"
+            exit 0
+          fi
           echo "Downloading $URL ..."
           curl -fL --retry 5 --retry-delay 5 -o "$NAME" "$URL"
           ls -lh "$NAME"
-          # Always clobber so ICD harden / rebuilds can refresh the same tag asset.
           gh release upload "$TAG" "$NAME" -R "$GITHUB_REPOSITORY" --clobber
           echo "Uploaded $NAME to $TAG"
