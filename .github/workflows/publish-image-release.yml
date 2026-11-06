@@ -144,31 +144,45 @@ jobs:
 
           分区镜像包：解压后 `bash disk_assemble.sh ohos_disk.img`。
 
-          相对 20261104 各轮（Flutter 评测 HAP 修复）：
-          - **libflutter.so 运行时改道补丁**（`libvk_icd_force.z.so` LD_PRELOAD 进 appspawn）：
-            Impeller Vulkan → 内建 Skia GL，评测 release HAP 不再 `SIGSEGV@0x30`
-          - **锁屏旁路**（`libscreenlock_bypass.z.so` LD_PRELOAD 进 foundation）：
-            修 PC 形态 `aa start` 必现 10106102
-          - `persist.appspawn.reqMgr.timeout 60` 固化
-          - 验收：进程存活 ≥30s、窗口持焦、Flutter 蓝 UI 渲染（包内 `flutter_firstframe.jpeg`）
+          **20261105-flutter-v2（首帧修复版）**：
+          - `libvk_icd_force.z.so` v3：新增第二个运行时补丁点——DisplayList 派发表中
+            dl_sk_dispatcher.cc(328) 的 fatal-check thunk（libflutter.so vaddr `0x4a2500` /
+            file off `0x4a1500`）改写为 `ret`，消除首帧 `Check failed: false` →
+            `FML KILL PROCESS` → watchdog 误报
+          - 修正候选地址算术（candidates_of 返回段基址+段偏移，各补丁点独立计算）
+          - 验收：进程存活 4.5+ 分钟、`first-frame fired`、Flutter 蓝 UI 实际渲染
+            （包内 `flutter_firstframe.jpeg`，70% 蓝色像素）、零 SIGSEGV、零 faultlog
 
-          详见包内 `FLUTTER-GRAPHICS.md` / `CHANGES-flutter-graphics.md` / `USAGE.md`。
+          详见包内 `FLUTTER-GRAPHICS.md` / `CHANGES.md` / `USAGE.md`。
 
           ## 校验
 
           ```bash
-          tar -tzf OpenHarmony-5.1.0-x86_general-images-20261105-flutter.tar.gz
+          md5sum OpenHarmony-5.1.0-x86_general-images-20261105-flutter-v2.tar.gz
+          # 6fff421a204b92c702a03d8ec65042c9
+          tar xzf OpenHarmony-5.1.0-x86_general-images-20261105-flutter-v2.tar.gz
+          cd OpenHarmony-5.1.0-x86_general-images-20261105-flutter-v2
           md5sum -c md5.txt
           bash disk_assemble.sh ohos_disk.img
-          hdc install hello_world-signed-release.hap
-          hdc shell 'aa start -a EntryAbility -b io.flutter.examples.hello_world'
-          sleep 30 && hdc shell 'tail -3 /data/log/flpatch.log'  # PATCHED
           ```
+
+          ## 快速验收
+
+          ```bash
+          hdc install hello_world-signed-release.hap
+          hdc shell aa start -a EntryAbility -b io.flutter.examples.hello_world
+          sleep 30
+          hdc shell 'tail -4 /data/log/flpatch.log'
+          # 预期两行: PATCHED addr=0x...bca8 + FATAL-THUNK-NEUTRALIZED addr=0x...2500
+          ```
+
+          注意：覆盖安装前先 `bm uninstall`；冷启动（TCG）等 SystemUI 就绪 2–3 分钟再
+          `aa start`，必要时临时 `param set persist.sys.abilityms.timeout_unit_time_ratio 6`。
 
           ## 源码
 
-          - `ohos-5.1/docs/snippets/flutter_qemu_preload.c`
-          - `ohos-5.1/docs/snippets/screenlock_bypass.c`
+          - `ohos-5.1/docs/snippets/flutter_qemu_preload.c`（commit 70b5845）
+          - `ohos-5.1/docs/snippets/screenlock_bypass.c`（commit 4a35f84）
           - `ohos-5.1/docs/FLUTTER-GRAPHICS.md`（原理与排障记录）
           EOF
           elif [ "$NOTES_KIND" = "flutter" ]; then
