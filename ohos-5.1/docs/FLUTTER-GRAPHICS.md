@@ -89,6 +89,43 @@ loader 上的入口门（v4 的 VULKAN-GUARD）已从实际打补丁路径拿掉
 
 构建侧用这张盘再开机，没有重装。release 立刻再拉起的最终 pid 2159 在 19:40:40 只有 `fork-child`，19:41:13 自己写下 `fast-arm`、`PATCHED`、`FATAL-THUNK-NEUTRALIZED`，19:41:22 `first-frame fired`。空闲六分钟和 debug 三次这次没有再跑。
 
+## 合并盘 `ohos_disk_51_flutter_merge.img`（2026-11-09 21 点）
+
+使用侧两张盘两次复验后对齐的结论：装包修复（fs-verity/code-sign）只在 11-06 verity 盘（`48012d5c`，内核 #7）上；留存修复（fast-arm preload `12fd8e1a`）只在 11-09 stayup 盘（`404b7ca`，内核 #4）上。两条修复线没有合并。
+
+stayup 盘新装失败的根因在内核 #4 的 `fs/ext4/ioctl.c`：`FS_IOC_ENABLE_VERITY` 有 case，`FS_IOC_ENABLE_CODE_SIGN` 没有（f2fs 和 btrfs 都有，ext4 漏了）。BMS 对新文件 `EnableCodeSignForFile` 走到 ext4 的 `default:` 返回 ENOTTY（errno 25），`VerifyCodeSignatureForHap` 返回 -768，装包 9568393。`/sys/fs/verity` 缺失是另一个独立问题：#4 重建内核时 `fs/verity/sysfs.c`（07 号补丁）没有进 `src_tmp`，但 BMS 判定 fs-verity 用的是 statx `STATX_ATTR_VERITY`，不依赖这个目录——补上 ext4 的 ioctl 之后，20MB release HAP 在没有 `/sys/fs/verity` 的 #5 内核上也能装成功，证明装包链路只卡 ioctl。
+
+合并盘在 stayup 盘（`404b7ca`：preload `12fd8e1a`、看门狗 `9e93c078`、ratio 24、两个预装 HAP）基础上只换了内核和 4 个模块：
+
+- 内核 `6.6.86 #6 SMP PREEMPT_DYNAMIC Mon Nov 9 21:20:57 CST 2026`，bzImage md5 `7b8fd4da399732e1e2327869fa4d6979`。相对 #4 的差异：`fs/ext4/ioctl.c` 补上 `FS_IOC_ENABLE_CODE_SIGN`（主 ioctl 和 compat 两处，对齐 f2fs/btrfs 的接法）+ 恢复 07 号补丁的 `fs/verity/sysfs.c`（`/sys/fs/verity/features` 回来了）。verdict：verbatim #4 的其余部分（verity open.c 的 code-sign hook 顺序、signature.c 空 keyring、btrfs ioctl）都在。
+- 4 个模块与 #4 同 md5（同一 vermagic `6.6.86 SMP preempt mod_unload modversions`）。
+- 整盘 md5 `53d50f7a4ea17b2be898eb7b8d2255d3`。`ohos_disk_51_verity.img` 和 `ohos_disk_51_flutter_stayup.img` 都没动。
+
+内核 #6 在合并盘（qcow2 overlay）上的复验（2026-11-09 21 点）：
+
+- 干净开机：`/sys/fs/verity/features` 存在，preload 仍是 `12fd8e1a`。
+- 新装 20MB 验收 release HAP（`bm install`，之前没装过的 overlay）：`install bundle successfully`，hilog `EnableCodeSignForFile ... ret = 0`、`VerifyCodeSignatureForHap` 通过，没有 9568393。
+- 新装后立刻拉起：最终 pid 2289 自己打出 `fast-arm`、`PATCHED`、`FATAL-THUNK-NEUTRALIZED`（fork 后 2.3s），21:28:48 `first-frame fired`，52 秒后进程还在。
+- 早一轮 #5 内核（同样的 ext4 ioctl 修复、没有 sysfs）在另一个 overlay 上还验过：新装 release 后重启，`dd` 读 `entry.hap` 正常（重启可读）；重启后冷启动 pid 2171 三行都在、`first-frame fired`；force-stop 立刻再拉起，池 pid 2174 自己打三行（旧 watcher 99495ms 结束）+ `first-frame fired`；debug 池 pid 2309 `PATCHED-DEBUG` + `PATCHED-DEBUG-CTX` + `first-frame fired`。两个应用 52 秒后都在。没有新的 cppcrash。
+
+92MB debug HAP 新装仍然 9568288：`CheckSystemSize` 用 `max(2*hap, 512MiB)` 对 `/data/app/el1/bundle` 的 statfs，1.5GB 的 /data 在装包过程中（entry_tmp 拷贝与源 hap 并存）落到 512MiB 线以下。清掉 /data/log 后 avail 回到约 660MB 仍不够，因为检查时安装副本已经占了空间。这是 data 分区容量问题，不是两条修复线的问题；盘上预装的 `com.example.my_flutter_app` 不受影响，20MB 级新签名包装得进、装得上、装完能跑。
+
+### 最终版：data 扩容 + 全矩阵（md5 `f5ca21a4`）
+
+把 p4 从 1536M 扩到 2750M（镜像 5724M，文件系统 resize2fs 到 687395 块）之后，92MB debug 新装不再 9568288。整盘 md5 `f5ca21a4c9a55688852015bb8c2a23f1`，内核仍是 #6 `7b8fd4da`，preload `12fd8e1a`。发布包 `images-5.1.0-20261109-flutter-merge`（`disk_assemble.sh` 按 512M/2016M/512M/2750M 新布局，ESP 用 mtools 构建）。
+
+在这张盘上（qcow2 overlay）的最终矩阵，全部先 `bm uninstall` 再全新 `bm install`：
+
+- release `io.flutter.examples.hello_world`（20MB）：安装成功，`EnableCodeSignForFile ret = 0`。
+- debug `com.example.my_flutter_app`（92MB）：安装成功，不再 9568288。
+- release 冷启动 pid 2451 / 立即再拉 pid 2454 / 空闲 8.5 分钟再拉 pid 2756：三个场景最终 pid 都自打 `fast-arm`+`PATCHED`+`FATAL-THUNK-NEUTRALIZED`，分别 21:39:23、21:40:01、21:49:58 `first-frame fired`，52 秒留存。
+- debug 冷启动 pid 2557 / 空闲 6.3 分钟再拉 pid 2990：自打 `fast-arm`+`PATCHED-DEBUG`+`PATCHED-DEBUG-CTX`，21:41:15、21:50:51 出帧留存。debug 立即再拉 pid 2658：自打 `fast-arm`，两处补丁由 appspawn 父扫描早 377ms 打上（PATCHED 行在 pid 164 名下），进程上补丁生效，21:42:17 出帧留存。
+- 重启后：两个全新安装的 HAP `dd` 可读（20M/91M），无 Reserved-bits/verity 错误；冷启动 release pid 2180、debug pid 2183 均自打补丁行并出帧留存。
+- 全程 `/data/log/faultlog/cppcrash` 为空。
+- 拼盘脚本重放（reassembled.img）开机复验：#6 内核、`/sys/fs/verity` 在、preload `12fd8e1a`、/data 2.6G；release pid 2164 与 debug pid 2167 各自补丁+出帧+52 秒留存。
+
+`48012d5c`、`404b7ca` 两张源盘未动。
+
 ## v4 源码（`docs/snippets/flutter_qemu_preload.c`，尚未替换 48012d5c 这张盘）
 
 2026-11-07 在不改基盘的 qcow2 overlay 上试过，**release 验收没有保住，不能当新口径**：

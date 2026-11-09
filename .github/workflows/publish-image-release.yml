@@ -39,6 +39,11 @@ jobs:
           NAME="${{ github.event.inputs.asset_name || '' }}"
 
           case "$TAG" in
+            images-5.1.0-20261109-flutter-merge)
+              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261109-flutter-merge.tar.gz"
+              TITLE="OpenHarmony 5.1.0 x86_general images (20261109 Flutter merge)"
+              NOTES_KIND=flutter_merge
+              ;;
             images-5.1.0-20261109-flutter-fastarm)
               [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261109-flutter-fastarm.tar.gz"
               TITLE="OpenHarmony 5.1.0 x86_general images (20261109 Flutter fast-arm)"
@@ -148,14 +153,40 @@ jobs:
           - `ohos-5.1/patches/07-kernel-fs-verity-enable.patch`
           - `ohos-5.1/patches/08-code-sign-x86-statx-nr.patch`
           EOF
+          elif [ "$NOTES_KIND" = "flutter_merge" ]; then
+            cat > "$NOTES_FILE" <<'EOF'
+          ## 内容
+
+          合并盘：新装 HAP 与 Flutter 进程留存同时成立。data 分区 2560M（镜像 5724M），`disk_assemble.sh` 已按新布局更新。
+
+          相对 `images-5.1.0-20261109-flutter-fastarm`（盘 `404b7ca`）：
+
+          - 内核 `6.6.86 #6`（bzImage `7b8fd4da`）：`fs/ext4/ioctl.c` 补上 `FS_IOC_ENABLE_CODE_SIGN`（新装 9568393 ENOTTY 的根因），恢复 `fs/verity/sysfs.c`（`/sys/fs/verity/features`）。
+          - preload 仍为 `12fd8e1a6d326158c81130a787f55007`，看门狗 60s 与 ratio 24 不变。
+          - data 1536M→2560M：92MB debug HAP 新装不再 9568288。
+
+          全矩阵复验（2026-11-09，构建侧，先卸载再全新安装）：两个 HAP 全新安装成功（code sign ret=0）；release/debug × 冷启动、立即再拉、空闲>6 分钟共六场景，最终 pid 均有 fast-arm + PATCHED/FATAL（debug 为 PATCHED-DEBUG/CTX）+ first-frame fired + 52 秒留存；重启后新装 HAP 可读、再启动仍出帧留存；无新 cppcrash。
+
+          ## 校验
+
+          ```bash
+          tar xzf OpenHarmony-5.1.0-x86_general-images-20261109-flutter-merge.tar.gz
+          cd OpenHarmony-5.1.0-x86_general-images-20261109-flutter-merge
+          md5sum -c md5.txt
+          bash disk_assemble.sh ohos_disk.img
+          ```
+
+          ## 源码补丁
+
+          - `ohos-5.1/patches/11-kernel-ext4-enable-codesign.patch`
+          - `ohos-5.1/docs/FLUTTER-GRAPHICS.md`
+          EOF
           elif [ "$NOTES_KIND" = "flutter_fastarm" ]; then
             cat > "$NOTES_FILE" <<'EOF'
           ## 内容
 
           分区镜像包：解压后 `bash disk_assemble.sh ohos_disk.img`。
           system / vendor / data 来自整盘 md5 `404b7caac52342e753e90492493ec783`。ESP 由脚本按包内 `bzImage` 重建。
-
-          相对 `images-5.1.0-20261109-flutter-stayup`（盘 `d42be74f`，preload `f17a3159`）：
 
           - preload `12fd8e1a6d326158c81130a787f55007`（20824 字节）。`prctl` 把进程名改离 `apppool` 时再起一条 1ms watcher，日志是 `fast-arm`。前 10 秒仍是 1ms，之后空闲池是 20ms，补丁写上才退出。`apppool` 这个名字不写 `fast-arm`。
           - 内核、看门狗、ratio 与上一版相同。不要 `hdc install` 覆盖盘上已经装好的包。新安装会在 code-sign 上失败（9568393 / errno 25），debug 包还会报空间不足（9568288）。
