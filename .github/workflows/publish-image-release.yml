@@ -318,4 +318,5 @@ jobs:
           curl -fL --retry 5 --retry-delay 5 -o "$NAME" "$URL"
           ls -lh "$NAME"
           gh release upload "$TAG" "$NAME" -R "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --latest
           echo "Uploaded $NAME to $TAG"
