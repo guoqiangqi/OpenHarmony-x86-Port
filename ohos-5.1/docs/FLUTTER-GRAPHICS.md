@@ -1,6 +1,126 @@
-# OpenHarmony 5.1 x86 QEMU：Flutter 评测 HAP 运行时修复（v2，首帧修复版）
+# OpenHarmony 5.1 x86 QEMU：Flutter 评测 HAP 运行时修复
 
-## 本轮交付（2026-11-05 21:xx）
+## 交付口径（使用侧按这个验收，不要按「已彻底修复」）
+
+已发布基盘 `ohos_disk_51_verity.img` md5 `48012d5c0e2670075ee6c2c0d1aed43c`
+（flpatch v3，`libvk_icd_force.z.so` md5 `cb0d02d72180e23f08ab2a5cde20703b`）只覆盖下面这一格。
+
+| 用例 | 该盘的实际结果 |
+|------|----------------|
+| 干净 guest + 验收包 `hello_world-signed-release.hap` | 进程存活，hilog 有 first-frame fired / wait cleared |
+| 干净 guest + `flutter build hap --debug --target-platform ohos-x64` | **不覆盖**。debug `libflutter.so` 约 39MB，文件布局和验收 release（约 18MB）不同 |
+| 同一 guest 上多次安装/崩溃之后再跑验收 release | **不覆盖**。干净重启同一张盘后恢复。这是运行时竞态，不是盘坏了 |
+
+v3 的 flpatch 只做两件事，而且两处都写死验收 release 引擎的文件偏移：
+
+1. 后端改道，文件偏移 `0x37aca8`：Impeller Vulkan 分支改跳到 Skia GL。
+2. `dl_sk_dispatcher.cc` 里 `Check failed: false` 的 thunk，文件偏移 `0x4a1500`，改成 `ret`。
+
+它不改 `libvulkan.so`。debug 引擎、以及脏 guest 上补丁线程晚于引擎初始化的情况，仍会进
+`libvulkan.so` 的 `vkGetInstanceProcAddr` / `globalGetProcAddr`，在空指针上
+`SIGSEGV(SEGV_MAPERR)@0x28` 或 `@0x30`。`/data/log/flpatch.log` 里出现
+`PATCHED` 和 `FATAL-THUNK-NEUTRALIZED` 只说明某个进程里验收 release 的那两个偏移对上了，
+不能说明当前这个 debug 包被改道。
+
+使用侧在这张盘上的临时做法：评测用 `flutter build hap --release`（或直接用验收 release 包）；
+多次崩溃后重启 QEMU 或换干净 overlay，不要在脏 guest 上把 release 复现判成盘损坏。
+
+## debug 崩溃点（Build ID 6646ddaf，2026-11-08 反汇编）
+
+使用侧补上的 `libflutter.so`（39641040 字节，md5 `502ae5bf1523981aa6a106c3861ab0e3`）里，
+`+0x1f6fd6c` 是 `mov 0x28(%rsi), %rax`。崩溃寄存器 `rsi = 0`，所以故障地址是 `0x28`，不是 loader 的 `[instance+8]`。
+调用点在 `+0x179ad6e`：Vulkan surface 构造函数拿到一个空的 shared_ptr，仍把它传进这个不判空的拷贝。
+上游 `OhosSurfaceFactoryImpl::CreateSurface` 在 `eax == 2` 时走这条路径（va `0x17ab8fe`，日志字符串
+`use impeller-vulkan`）。`eax == 1` 才是 `use skia-gl`。
+
+当前源码把这条 `je` 改成跳向 Skia 目标（`0x17ab96a`）。release 引擎里同样的短跳转序列还有别的函数，
+必须同时看到 `use impeller-vulkan` 这句日志才改；验收 release 仍走原来的 `r12d` 固定偏移。
+loader 上的入口门（v4 的 VULKAN-GUARD）已从实际打补丁路径拿掉：它会让 launcher `SIGBUS`，
+并和 `libflutter+0x376d2f` 的 `@0x6b0` 一起出现。
+
+2026-11-08 在干净 overlay 上换过当时的 so（md5 `c16069781fbad32016ddff7f672136fe`）。构造函数有打出
+`ctor: v5 ohos-surface reroute`，launcher 没有新的 `SIGBUS`。验收 release 的进程没有在观测窗口里留下来，
+也没有新的 cppcrash；当时 launcher 进程堆了好几个，guest 很慢。这一格还不能改口径。基盘 md5 仍是 `48012d5c`。
+之后把「固定偏移已经命中就不再扫全文」编进 so（md5 `5fdb635773b7915d573ea440236e0e19`）又开了一次干净 overlay。pid 2159 打出了 `PATCHED`、`FATAL-THUNK-NEUTRALIZED` 和 `dlopen_ns-sync libflutter.so`，73 秒后仍然 `SIGSEGV@0x6b0`，PC `libflutter+0x376d2f`，`rcx = 0`。这条指令是 `rbx == 0` 时从 `0x376af4` 跳进来的 `mov 0x6b0(%rcx), %rax`，`96(%rsp)` 同样是 0。同机再开一张只带出厂 v3（md5 `cb0d02d7`）的 overlay 时，launcher 大约每 20 秒多出一个进程，验收包的 LoadAbility 提交后没有留下进程，也没有新的 cppcrash。
+
+随后把 preload 退回这颗能工作的 v3（appspawn 扫描 + 进程内 watcher，不再拦截 `dlopen_ns`）。debug 引擎（Build ID `6646ddaf`）要改两处，只改 surface 会在 Skia 路径上把 Vulkan 上下文的 `+48` 当成 EGLDisplay，`SIGSEGV@0xb08`（`libflutter+0x177eb70`）。两处都是 `je` 改跳 Skia：surface 文件偏移 `0x17aa8fe`，context 文件偏移 `0x17aab12`。当前 so md5 `fc2ffa5e7602304a6ba472f17e986090`。
+
+签名 debug HAP `com.example.my_flutter_app` / `EntryAbility` 在只换 preload 的 overlay 上：pid 2174 打出 `PATCHED-DEBUG` 和 `PATCHED-DEBUG-CTX`，走 `ohos_surface_gl_skia` / `create EGLSurface`，hilog 有 `first-frame callback` 和 `first-frame fired`，没有新的 cppcrash。进程随后被 appspawn 记为 signal 9。这和验收 release 在 first-frame 之后被 `LIFECYCLE_TIMEOUT` 杀掉是同一类前台超时，不是原来的 Vulkan 空指针。出厂 v3（`cb0d02d7`）没有这两处 debug 偏移。
+
+## 出帧后不被 signal 9 杀掉，并且重启后 HAP 仍能打开（2026-11-09 overlay）
+
+同一张 overlay（基盘仍是 `48012d5c`，改动在 qcow2 里）补了三处，干净 `begetctl reboot shutdown` 之后再启动，下面两格都过了：
+
+| 改动 | 位置 |
+|------|------|
+| flpatch md5 `f17a315909cadac11b85d035fa3f65ed`（`2b16b03c` 修了 fork 后的锁；这一版在补丁打上之前不退出） | `/system/lib64/libvk_icd_force.z.so` |
+| `libappkit_native.z.so` 看门狗周期 3000ms 改为 60000ms，md5 `9e93c0787b5d37070c38bd61f127591f` | `/system/lib64/platformsdk/libappkit_native.z.so` |
+| `persist.sys.abilityms.timeout_unit_time_ratio = 24`（前台超时约 120s） | `/system/etc/param/appfwk.para` |
+| 内核读 code-sign 描述符时，hook 返回 1 就跳过 `__reserved` 和 `data_size == i_size`；btrfs 接受 `FS_IOC_ENABLE_CODE_SIGN`；密钥环为空且 `require_signatures=0` 时不再 `-ENOKEY` | ESP `bzImage`，`uname -v` 为 `#4 SMP PREEMPT_DYNAMIC Mon Nov 9 00:40:31 CST 2026`。四个模块（virtio-gpu、virtio_dma_buf、drm_shmem_helper、e1000）与这颗内核一起换过 |
+
+复验（重启后没有重装，直接读已安装文件再拉起）：
+
+- `entry.hap` 和 debug `libflutter.so` 的 `dd` 都成功。内核日志没有 `Reserved bits set`，也没有 `keyring is empty`。
+- 验收 release pid 1859：`PATCHED`、`FATAL-THUNK-NEUTRALIZED`，`first-frame callback` 00:42:38，`first-frame fired` 00:42:44。00:43:38 进程仍在。
+- debug pid 1898：`PATCHED-DEBUG` 和 `PATCHED-DEBUG-CTX`，Skia/EGL，`first-frame callback` 00:42:43，`first-frame fired` 00:42:53。00:43:38 进程仍在。
+- 没有新的 11-09 00:42 之后的 cppcrash / sysfreeze。signal 9 没有再出现。
+
+上面这次重启读文件时，盘上的 preload 还是更早的 so。内核、看门狗和 ratio 之后没有再改。14 点换上 `f17a3159` 的复验见下文。
+
+上述 overlay 已导出为 `/root/ohos51-verity/ohos_disk_51_flutter_stayup.img`。换上不退出的这版 preload 之后，整盘 md5 是 `d42be74f86b418aafd447e1282153168`。原来的 `ohos_disk_51_verity.img` 没有被覆盖，md5 仍是 `48012d5c0e2670075ee6c2c0d1aed43c`。
+
+脏 guest 这一格能修，但不能靠拦截 `dlopen` / `dlopen_ns`。导出这两个符号之后，补丁明明已经打上，验收 release 仍在 `libflutter+0x376d2f` `SIGSEGV@0x6b0`（pid 1841、2194）。原因是 appspawn 多线程里别的线程拿着锁，`fork` 进子进程后这把锁一直是锁上的，子进程里的 watcher 根本没跑，只剩 appspawn 每 50ms 扫一次。热页缓存时引擎会先选 Vulkan。子进程里把这把锁重新初始化之后，watcher 自己打补丁：force-stop 再立刻 `aa start`，pid 2243 在 fork 后 2032ms 打上 `PATCHED` 和 `FATAL-THUNK-NEUTRALIZED`，09:37:12 `first-frame fired`，进程还在，没有新的 hello_world cppcrash。那一版 so 是 `2b16b03cba08e4d5d862f20cc3c09087`。它的 watcher 大约四分钟后退出，空闲更久的 apppool 会退回 50ms 扫描。
+
+当前 so `f17a315909cadac11b85d035fa3f65ed` 在补丁打上之前不退出：前 10 秒每 1ms 看一次，之后每 50ms。2026-11-09 14 点在同一张 overlay 上复验（内核仍是上面的 `#4`，看门狗和 ratio 没变）：
+
+- 验收 release pid 2131：fork 后 652ms 自己打上 `PATCHED` 和 `FATAL-THUNK-NEUTRALIZED`，14:16:47 `first-frame fired`。
+- force-stop 再立刻启动，pid 2133 已空闲 84s，自己打补丁，14:18:13 `first-frame fired`。
+- 再 force-stop，pid 2250 空闲 378s（超过旧 watcher 的约 260s）后自己打补丁，14:24:31 `first-frame fired`。14:28 进程仍在。
+- debug pid 2459：`PATCHED-DEBUG` 和 `PATCHED-DEBUG-CTX`，Skia/EGL，14:25:20 `first-frame fired`。force-stop 再立刻启动，pid 2531 空闲 85s 后两处都打上，14:26:46 `first-frame fired`，14:28 仍在。
+- 没有 14 点之后的新 cppcrash，也没有 `LIFECYCLE_TIMEOUT` / `THREAD_BLOCK`。debug 引擎会打出 `dl_sk_dispatcher.cc` 的 `Check failed: false`，进程没有因此退出。release 的 fatal thunk 偏移不在这颗 debug 引擎上。
+
+## v4 源码（`docs/snippets/flutter_qemu_preload.c`，尚未替换 48012d5c 这张盘）
+
+2026-11-07 在不改基盘的 qcow2 overlay 上试过，**release 验收没有保住，不能当新口径**：
+
+- 从 appspawn 扫全机的版本会在 launcher 里 `SIGBUS`。子进程跑构造函数时 `comm` 还是 `appspawn`。这版已从源码里去掉。
+- 去掉扫描、改由 `dlopen_ns` 在返回前打补丁之后，验收 release 仍然 `SIGSEGV(SEGV_MAPERR)@0x6b0`，`rcx = 0`，PC 在 `libflutter.so+0x376d2f`（`mov 0x6b0(%rcx), %rax`）。同一条 flpatch 里已经有 `PATCHED`、`FATAL-THUNK-NEUTRALIZED` 和 `dlopen_ns-sync libflutter.so`，没有 `VULKAN-GUARD`。也就是 v3 那两处补丁打上了，进程还是空指针崩溃。
+- 所以 v4 连「干净 guest + release」都还没重新通过，debug HAP 和脏 guest 两格都没有验收数据。
+
+针对上面两格补的运行时逻辑如下，未复验通过前不要当成新基盘口径：
+
+1. **改道改为认指令形状，不再只认文件偏移。** 形状是验收 release 里唯一的一处
+   `cmp $2, r12d; je; cmp $1, r12d; je; test r12d, r12d`（文件偏移 `0x37aca8`）。
+   扫到就把第一条 `je` 改成跳向第二条 `je` 的目标。固定偏移仍然先试一次。
+   本机另一份约 60MB 的 `libflutter.so`（不是使用侧那份 39MB debug 包）里没有这条指令，
+   也没有 `dl_sk_dispatcher.cc` 字符串。扫不到时日志打
+   `backend signature not found (r12d idiom); engine not rerouted`，进程不会被误改。
+2. **fatal thunk 同样先试 `0x4a1500`，再按字符串签名扫。** 锚点是 `mov esi, 4`，
+   向前找同时引用 `dl_sk_dispatcher.cc` 和精确字符串 `false` 的 `lea`，再改对应的
+   `push rbx; sub rsp, 0x120` 序言。单独按这 8 字节序言去扫会打到别的函数，所以没有这么做。
+3. **在 `dlopen` 返回前、由加载线程同步打补丁。** v3 靠 5ms 轮询 `/proc/self/maps`。
+   脏 guest 上页缓存热，引擎会先跑到 Vulkan 分支，轮询还没被调度，于是同一张盘上的
+   release 也会 `SIGSEGV@0x30`；干净重启后 I/O 变慢，补丁又抢先，所以看起来像「盘坏了」。
+   `libflutter.so` 的构造函数不选后端（选后端在 `Rasterizer::Setup`），`dlopen` 返回前打完来得及。
+   不再从 appspawn 扫别的进程：子进程构造函数跑的时候 `comm` 还是 `appspawn`，
+   一开扫描就会在 launcher 里 `SIGBUS`。每个应用只补自己。
+4. **本进程内给 guest `libvulkan.so`（620248 字节，md5 `430c458f9b36e88c7f2524452a1274cf`）加低地址防护。**
+   `loader_get_instance` 在空指针检查之后直接比较 `[instance+8]` 上的魔数。实例句柄若是
+   `0x20` / `0x28` 这种非空垃圾值，故障地址就是 `0x28` / `0x30`。
+   崩溃栈上的 `globalGetProcAddr+77` 和 `vkGetInstanceProcAddr+38` 是 `strcmp` /
+   `globalGetProcAddr` 的返回地址，不是故障指令本身。
+   防护拒绝低于 `0x10000` 的 `pName` 和实例句柄（NULL 实例仍然合法），并把随后的
+   `abort` 改成走到原来的「返回 NULL」路径。闸门页只建在当前进程里；从 appspawn
+   往别的进程写一条跳进自己地址空间的跳转会立刻再崩，所以没有这么做。
+   字节对不上这份 loader 就不动。
+
+v4 仍然做不到、不能写成验收通过的情况：
+
+- debug / JIT 引擎没有发出上述 `r12d` 三路比较。这种包不会被改道。
+- 引擎拿到 NULL 函数指针之后自己 `call` 出去。loader 不再 `SIGSEGV`，崩溃点会挪到 `libflutter.so`。
+- 不是这份 md5 的 `libvulkan.so`。
+
+## 本轮交付（2026-11-05 21:xx，v3 / 盘 48012d5c）
 
 | 项 | 值 |
 |----|-----|

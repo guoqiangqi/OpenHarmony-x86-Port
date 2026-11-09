@@ -39,6 +39,11 @@ jobs:
           NAME="${{ github.event.inputs.asset_name || '' }}"
 
           case "$TAG" in
+            images-5.1.0-20261109-flutter-stayup)
+              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261109-flutter-stayup.tar.gz"
+              TITLE="OpenHarmony 5.1.0 x86_general images (20261109 Flutter stay-up)"
+              NOTES_KIND=flutter_stayup
+              ;;
             images-5.1.0-20261105-flutter-v2)
               [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261105-flutter-v2.tar.gz"
               TITLE="OpenHarmony 5.1.0 x86_general images (20261105 Flutter first-frame fix)"
@@ -137,6 +142,38 @@ jobs:
 
           - `ohos-5.1/patches/07-kernel-fs-verity-enable.patch`
           - `ohos-5.1/patches/08-code-sign-x86-statx-nr.patch`
+          EOF
+          elif [ "$NOTES_KIND" = "flutter_stayup" ]; then
+            cat > "$NOTES_FILE" <<'EOF'
+          ## 内容
+
+          分区镜像包：解压后 `bash disk_assemble.sh ohos_disk.img`。
+          system / vendor / data 与整盘 md5 `d42be74f86b418aafd447e1282153168` 相同。ESP 由脚本按包内 `bzImage` 重建。
+
+          相对 20261105-flutter-v2：
+
+          - preload `f17a315909cadac11b85d035fa3f65ed`：验收 release 改走 Skia，并中和 `dl_sk_dispatcher.cc:328`；debug 引擎 surface `0x17aa8fe` 与 context `0x17aab12` 也改走 Skia。fork 后子进程重新初始化锁，补丁线程在命中前不退出。
+          - `libappkit_native.z.so` 看门狗周期 60 秒（md5 `9e93c078`）。
+          - `persist.sys.abilityms.timeout_unit_time_ratio = 24`。
+          - 内核 `#4 SMP PREEMPT_DYNAMIC Mon Nov 9 00:40:31 CST 2026`：重启后已安装 HAP 仍能打开。四个模块与内核一起更换。
+
+          2026-11-09 在 overlay 上复验：验收 release 与签名 debug 都能出第一帧并留在进程里；`aa force-stop` 后立刻再启动，包括空闲 378 秒的 apppool，也是子进程自己打补丁再出帧。没有新的 cppcrash。debug 引擎仍会打出 `Check failed: false`，进程没有因此退出。
+
+          旧盘 md5 `48012d5c` 只覆盖干净 guest + 验收 release，不要用那张盘验收这一版。
+
+          ## 校验
+
+          ```bash
+          tar xzf OpenHarmony-5.1.0-x86_general-images-20261109-flutter-stayup.tar.gz
+          cd OpenHarmony-5.1.0-x86_general-images-20261109-flutter-stayup
+          md5sum -c md5.txt
+          bash disk_assemble.sh ohos_disk.img
+          ```
+
+          ## 源码
+
+          - `ohos-5.1/docs/snippets/flutter_qemu_preload.c`
+          - `ohos-5.1/docs/FLUTTER-GRAPHICS.md`
           EOF
           elif [ "$NOTES_KIND" = "flutter_engine" ]; then
             cat > "$NOTES_FILE" <<'EOF'

@@ -67,7 +67,8 @@
 #define LOG_PATH "/data/log/flpatch.log"
 #define VADDR_OFF 0x37bca8u   /* virtual address of the backend-selection cmp/je */
 #define FILE_OFF 0x37aca8u    /* file offset of the same instruction           */
-#define WATCH_TICKS 12000     /* x 5 ms = 60 s */
+/* Prefork child may sit idle for minutes. The watcher must not exit
+ * before libflutter is mapped, or the 50 ms appspawn scan loses again. */
 
 /* fatal-check thunk (dl_sk_dispatcher.cc:328) start: push rbx; sub rsp,0x120 */
 static const unsigned char fatal_expected[8] = {
@@ -84,6 +85,7 @@ static DlopenFn real_dlopen;
 static ForkFn real_fork;
 static int log_fd = -1;
 static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t patch_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static long now_ms(void)
 {
@@ -100,7 +102,7 @@ static void log_line(const char *fmt, ...)
 
     pthread_mutex_lock(&log_lock);
     if (log_fd < 0 || fcntl(log_fd, F_GETFD) == -1)
-        log_fd = open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        log_fd = open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
     if (log_fd >= 0) {
         len = snprintf(buf, sizeof(buf), "[flpatch pid=%d t=%ld] ",
                        (int)getpid(), now_ms());
@@ -124,6 +126,33 @@ static const unsigned char replacement_bytes[14] = {
     /* cmp $0x2,%r12d ; jmp +0x626 (Skia GL config) ; nop ; cmp $0x1,%r12d */
     0x41, 0x83, 0xfc, 0x02, 0xe9, 0x26, 0x06, 0x00,
     0x00, 0x90, 0x41, 0x83, 0xfc, 0x01
+};
+
+/*
+ * Debug engine Build ID 6646ddaf. Two sites, both required:
+ *   surface file 0x17aa8fe: cmp $2,%eax; je Vulkan surface -> jmp Skia surface
+ *   context file 0x17aab12: cmp $2,%ebp; je Vulkan context (56-byte, no EGL)
+ *     -> jmp Skia context (144-byte, eglGetDisplay). Redirecting only the
+ *     surface leaves +48 as 0xb00 and SIGSEGV at libflutter+0x177eb70.
+ * The release 14-byte site is not in this binary.
+ * Do not export dlopen or dlopen_ns. Doing so reproduces SIGSEGV@0x6b0
+ * at libflutter+0x376d2f even after the byte patches land. The child
+ * watcher must run: a mutex held by another appspawn thread is copied
+ * locked across fork and otherwise the watcher never patches.
+ */
+#define FILE_OFF_DEBUG 0x17aa8feu
+static const unsigned char debug_expected[5] = {
+    0x83, 0xf8, 0x02, 0x74, 0x3a
+};
+static const unsigned char debug_replacement[5] = {
+    0x83, 0xf8, 0x02, 0xeb, 0x67
+};
+#define FILE_OFF_DEBUG_CTX 0x17aab12u
+static const unsigned char debug_ctx_expected[5] = {
+    0x83, 0xfd, 0x02, 0x74, 0x22
+};
+static const unsigned char debug_ctx_replacement[5] = {
+    0x83, 0xfd, 0x02, 0xeb, 0x43
 };
 
 /* Patch through an already-open /proc/<pid>/mem fd. */
@@ -151,6 +180,33 @@ static int patch_fd(int fd, uintptr_t addr, int log_fail)
     if (r == (ssize_t)sizeof(cur) &&
         memcmp(cur, replacement_bytes, sizeof(replacement_bytes)) == 0) {
         log_line("PATCHED addr=0x%lx", (unsigned long)addr);
+        return 1;
+    }
+    return 0;
+}
+
+static int patch_debug_site(int fd, uintptr_t addr, const unsigned char *expect,
+                           const unsigned char *replace, size_t n,
+                           const char *tag)
+{
+    unsigned char cur[8];
+    ssize_t r, w;
+
+    if (n > sizeof(cur))
+        return 0;
+    r = pread(fd, cur, n, (off_t)addr);
+    if (r != (ssize_t)n)
+        return 0;
+    if (memcmp(cur, replace, n) == 0)
+        return 1;
+    if (memcmp(cur, expect, n) != 0)
+        return 0;
+    w = pwrite(fd, replace, n, (off_t)addr);
+    if (w != (ssize_t)n)
+        return 0;
+    r = pread(fd, cur, n, (off_t)addr);
+    if (r == (ssize_t)n && memcmp(cur, replace, n) == 0) {
+        log_line("%s addr=0x%lx", tag, (unsigned long)addr);
         return 1;
     }
     return 0;
@@ -244,15 +300,20 @@ static void apply_all_patches(pid_t pid)
     uintptr_t seg[MAX_CANDIDATES];
     uintptr_t seg_off[MAX_CANDIDATES];
     char path[64];
-    int fd, n, i, routed = 0, thunked = 0;
+    int fd, n, i, routed = 0, thunked = 0, debug_routed = 0, debug_ctx = 0;
 
+    pthread_mutex_lock(&patch_lock);
     n = candidates_of(pid, seg, seg_off, MAX_CANDIDATES);
-    if (n <= 0)
+    if (n <= 0) {
+        pthread_mutex_unlock(&patch_lock);
         return;
+    }
     snprintf(path, sizeof(path), "/proc/%d/mem", (int)pid);
     fd = open(path, O_RDWR);
-    if (fd < 0)
+    if (fd < 0) {
+        pthread_mutex_unlock(&patch_lock);
         return;
+    }
     for (i = 0; i < n; i++) {
         uintptr_t a;
         if (!routed) {
@@ -260,15 +321,36 @@ static void apply_all_patches(pid_t pid)
             if (a && patch_fd(fd, a, pid == getpid()))
                 routed = 1;
         }
+        if (!debug_routed) {
+            a = site_addr(seg[i], seg_off[i], FILE_OFF_DEBUG);
+            if (a && patch_debug_site(fd, a, debug_expected, debug_replacement,
+                                      sizeof(debug_expected), "PATCHED-DEBUG"))
+                debug_routed = 1;
+        }
+        if (!debug_ctx) {
+            a = site_addr(seg[i], seg_off[i], FILE_OFF_DEBUG_CTX);
+            if (a && patch_debug_site(fd, a, debug_ctx_expected,
+                                      debug_ctx_replacement,
+                                      sizeof(debug_ctx_expected),
+                                      "PATCHED-DEBUG-CTX"))
+                debug_ctx = 1;
+        }
         if (!thunked) {
             a = site_addr(seg[i], seg_off[i], 0x4a1500u);
             if (a && patch_fatal_thunk(fd, a))
                 thunked = 1;
         }
     }
+    (void)debug_routed;
+    (void)debug_ctx;
     close(fd);
+    pthread_mutex_unlock(&patch_lock);
 }
 
+/*
+ * Same thread that loaded the engine, before dlopen_ns returns to
+ * NativeModuleManager and before Rasterizer::Setup. Byte-exact sites only.
+ */
 /* ---- in-process watcher ------------------------------------------- */
 
 static void *self_watcher(void *unused)
@@ -276,13 +358,19 @@ static void *self_watcher(void *unused)
     long t0 = now_ms();
 
     (void)unused;
-    for (int tick = 0; tick < WATCH_TICKS; tick++) {
+    /*
+     * The child is forked before the app loads libflutter. Spin until the
+     * mapping appears so a hot page cache cannot run Rasterizer::Setup on
+     * the unpatched bytes. After that, poll slowly.
+     */
+    for (;;) {
         uintptr_t seg[MAX_CANDIDATES];
         uintptr_t seg_off[MAX_CANDIDATES];
-        int fd, n, i, routed = 0, thunked = 0;
+        int fd, n, i, routed = 0, thunked = 0, debug_routed = 0, debug_ctx = 0;
 
         n = candidates_of(getpid(), seg, seg_off, MAX_CANDIDATES);
         if (n > 0) {
+            pthread_mutex_lock(&patch_lock);
             fd = open("/proc/self/mem", O_RDWR);
             if (fd >= 0) {
                 for (i = 0; i < n; i++) {
@@ -292,6 +380,22 @@ static void *self_watcher(void *unused)
                         if (a && patch_fd(fd, a, 1))
                             routed = 1;
                     }
+                    if (!debug_routed) {
+                        a = site_addr(seg[i], seg_off[i], FILE_OFF_DEBUG);
+                        if (a && patch_debug_site(fd, a, debug_expected,
+                                                  debug_replacement,
+                                                  sizeof(debug_expected),
+                                                  "PATCHED-DEBUG"))
+                            debug_routed = 1;
+                    }
+                    if (!debug_ctx) {
+                        a = site_addr(seg[i], seg_off[i], FILE_OFF_DEBUG_CTX);
+                        if (a && patch_debug_site(fd, a, debug_ctx_expected,
+                                                  debug_ctx_replacement,
+                                                  sizeof(debug_ctx_expected),
+                                                  "PATCHED-DEBUG-CTX"))
+                            debug_ctx = 1;
+                    }
                     if (!thunked) {
                         a = site_addr(seg[i], seg_off[i], 0x4a1500u);
                         if (a && patch_fatal_thunk(fd, a))
@@ -299,16 +403,20 @@ static void *self_watcher(void *unused)
                     }
                 }
                 close(fd);
-                if (routed && thunked) {
+                if ((debug_routed && debug_ctx) || (routed && thunked)) {
+                    pthread_mutex_unlock(&patch_lock);
                     log_line("self watcher: done after %ld ms",
                              now_ms() - t0);
                     return NULL;
                 }
             }
+            pthread_mutex_unlock(&patch_lock);
         }
-        usleep(5000);
+        if (now_ms() - t0 < 10000)
+            usleep(1000);
+        else
+            usleep(50000);
     }
-    return NULL;
 }
 
 /* ---- child watcher arming ------------------------------------------ */
@@ -326,22 +434,46 @@ static void arm_child_watcher(void)
 
     if (pthread_create(&thread, NULL, self_watcher, NULL) == 0)
         (void)pthread_detach(thread);
+    else
+        log_line("arm child watcher failed errno=%d", errno);
+}
+
+/*
+ * appspawn is multithreaded. A mutex held by another thread is left locked
+ * in the child and the watcher never runs, so only the 50 ms parent scan
+ * remains and a hot page cache wins. Take the locks in the parent, then
+ * reinitialize them in the child.
+ */
+static void fork_prepare(void)
+{
+    pthread_mutex_lock(&patch_lock);
+    pthread_mutex_lock(&log_lock);
+}
+
+static void fork_parent(void)
+{
+    pthread_mutex_unlock(&log_lock);
+    pthread_mutex_unlock(&patch_lock);
+}
+
+static void fork_child(void)
+{
+    pthread_mutex_init(&patch_lock, NULL);
+    pthread_mutex_init(&log_lock, NULL);
+    log_fd = -1;
+    log_line("fork-child");
+    arm_child_watcher();
 }
 
 pid_t fork(void)
 {
-    pid_t pid;
-
     if (!real_fork)
         real_fork = (ForkFn)dlsym(RTLD_NEXT, "fork");
     if (!real_fork) {
         errno = ENOSYS;
         return -1;
     }
-    pid = real_fork();
-    if (pid == 0)
-        arm_child_watcher();
-    return pid;
+    return real_fork();
 }
 
 /* ---- parent-side scanner (backup) ---------------------------------- */
@@ -353,21 +485,28 @@ static int try_patch_process(pid_t pid)
     char path[64];
     int fd, n, i;
 
+    pthread_mutex_lock(&patch_lock);
     n = candidates_of(pid, seg, seg_off, MAX_CANDIDATES);
-    if (n <= 0)
+    if (n <= 0) {
+        pthread_mutex_unlock(&patch_lock);
         return 0;
+    }
     snprintf(path, sizeof(path), "/proc/%d/mem", (int)pid);
     fd = open(path, O_RDWR);
-    if (fd < 0)
+    if (fd < 0) {
+        pthread_mutex_unlock(&patch_lock);
         return 0;
+    }
     for (i = 0; i < n; i++) {
         uintptr_t a = site_addr(seg[i], seg_off[i], FILE_OFF);
         if (a && patch_fd(fd, a, 0)) {
             close(fd);
+            pthread_mutex_unlock(&patch_lock);
             return 1;
         }
     }
     close(fd);
+    pthread_mutex_unlock(&patch_lock);
     return 0; /* keep retrying: exec segments may appear later */
 }
 
@@ -432,15 +571,15 @@ static void qemu_flutter_preload_init(void)
 
     real_dlopen = (DlopenFn)dlsym(RTLD_NEXT, "dlopen");
 
-    log_fd = open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    log_line("ctor: watchers starting");
+    log_fd = open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
+    log_line("ctor: v3+debug ctx hold");
 
     /*
      * The in-process watcher matters in spawned app processes. They are
      * forked (no exec) from appspawn, so the constructor does not rerun
      * there; the fork() wrapper below re-arms the watcher per child.
      */
-    (void)pthread_atfork(NULL, NULL, arm_child_watcher);
+    (void)pthread_atfork(fork_prepare, fork_parent, fork_child);
     if (pthread_create(&thread, NULL, self_watcher, NULL) == 0)
         (void)pthread_detach(thread);
     else
