@@ -53,7 +53,7 @@ loader 上的入口门（v4 的 VULKAN-GUARD）已从实际打补丁路径拿掉
 
 | 改动 | 位置 |
 |------|------|
-| flpatch md5 `f17a315909cadac11b85d035fa3f65ed`（`2b16b03c` 修了 fork 后的锁；这一版在补丁打上之前不退出） | `/system/lib64/libvk_icd_force.z.so` |
+| flpatch md5 `12fd8e1a6d326158c81130a787f55007`（进程被改名离开 apppool 时再挂一个快轮询） | `/system/lib64/libvk_icd_force.z.so` |
 | `libappkit_native.z.so` 看门狗周期 3000ms 改为 60000ms，md5 `9e93c0787b5d37070c38bd61f127591f` | `/system/lib64/platformsdk/libappkit_native.z.so` |
 | `persist.sys.abilityms.timeout_unit_time_ratio = 24`（前台超时约 120s） | `/system/etc/param/appfwk.para` |
 | 内核读 code-sign 描述符时，hook 返回 1 就跳过 `__reserved` 和 `data_size == i_size`；btrfs 接受 `FS_IOC_ENABLE_CODE_SIGN`；密钥环为空且 `require_signatures=0` 时不再 `-ENOKEY` | ESP `bzImage`，`uname -v` 为 `#4 SMP PREEMPT_DYNAMIC Mon Nov 9 00:40:31 CST 2026`。四个模块（virtio-gpu、virtio_dma_buf、drm_shmem_helper、e1000）与这颗内核一起换过 |
@@ -67,7 +67,7 @@ loader 上的入口门（v4 的 VULKAN-GUARD）已从实际打补丁路径拿掉
 
 上面这次重启读文件时，盘上的 preload 还是更早的 so。内核、看门狗和 ratio 之后没有再改。14 点换上 `f17a3159` 的复验见下文。
 
-上述 overlay 已导出为 `/root/ohos51-verity/ohos_disk_51_flutter_stayup.img`。换上不退出的这版 preload 之后，整盘 md5 是 `d42be74f86b418aafd447e1282153168`。原来的 `ohos_disk_51_verity.img` 没有被覆盖，md5 仍是 `48012d5c0e2670075ee6c2c0d1aed43c`。
+上述 overlay 已导出为 `/root/ohos51-verity/ohos_disk_51_flutter_stayup.img`。换上 `12fd8e1a` 这版 preload 之后，整盘 md5 是 `404b7caac52342e753e90492493ec783`。原来的 `ohos_disk_51_verity.img` 没有被覆盖，md5 仍是 `48012d5c0e2670075ee6c2c0d1aed43c`。发布包 `images-5.1.0-20261109-flutter-fastarm` 带的是这张盘。上一版 tag `images-5.1.0-20261109-flutter-stayup` 仍是 `d42be74f` / preload `f17a3159`。
 
 脏 guest 这一格能修，但不能靠拦截 `dlopen` / `dlopen_ns`。导出这两个符号之后，补丁明明已经打上，验收 release 仍在 `libflutter+0x376d2f` `SIGSEGV@0x6b0`（pid 1841、2194）。原因是 appspawn 多线程里别的线程拿着锁，`fork` 进子进程后这把锁一直是锁上的，子进程里的 watcher 根本没跑，只剩 appspawn 每 50ms 扫一次。热页缓存时引擎会先选 Vulkan。子进程里把这把锁重新初始化之后，watcher 自己打补丁：force-stop 再立刻 `aa start`，pid 2243 在 fork 后 2032ms 打上 `PATCHED` 和 `FATAL-THUNK-NEUTRALIZED`，09:37:12 `first-frame fired`，进程还在，没有新的 hello_world cppcrash。那一版 so 是 `2b16b03cba08e4d5d862f20cc3c09087`。它的 watcher 大约四分钟后退出，空闲更久的 apppool 会退回 50ms 扫描。
 
@@ -78,6 +78,16 @@ loader 上的入口门（v4 的 VULKAN-GUARD）已从实际打补丁路径拿掉
 - 再 force-stop，pid 2250 空闲 378s（超过旧 watcher 的约 260s）后自己打补丁，14:24:31 `first-frame fired`。14:28 进程仍在。
 - debug pid 2459：`PATCHED-DEBUG` 和 `PATCHED-DEBUG-CTX`，Skia/EGL，14:25:20 `first-frame fired`。force-stop 再立刻启动，pid 2531 空闲 85s 后两处都打上，14:26:46 `first-frame fired`，14:28 仍在。
 - 没有 14 点之后的新 cppcrash，也没有 `LIFECYCLE_TIMEOUT` / `THREAD_BLOCK`。debug 引擎会打出 `dl_sk_dispatcher.cc` 的 `Check failed: false`，进程没有因此退出。release 的 fatal thunk 偏移不在这颗 debug 引擎上。
+
+`f17a3159` 的空闲 apppool 自己打补丁，使用侧从同一张盘复验时没有出现在被拉起的那个 pid 上：进程能出帧，但 flpatch 只有更早的 `fork-child`。specialization 发生在沙箱挂载之后，原来的 watcher 可能还停在慢轮询里。`12fd8e1a` 在 `prctl` 把进程名改离 `apppool` 时再起一个 1ms 轮询，这一步在引擎装入之前。2026-11-09 17 点复验：
+
+- 立刻再拉起的 pid 2071 是 17:22:53 就 `fork-child` 的池。17:23 它自己打出 `fast-arm`、`PATCHED`、`FATAL-THUNK-NEUTRALIZED`，17:23:26 `first-frame fired`。
+- 空闲约 7 分钟的 pid 2220 同样自己打出这三行，旧 watcher 在 429035 ms 结束，17:30:37 `first-frame fired`。
+- 同一条路径上的 debug 池 pid 2440 自己打出 `PATCHED-DEBUG` 和 `PATCHED-DEBUG-CTX`。没有新的 17 点 cppcrash。
+
+使用侧用盘 `404b7ca`、so `12fd8e1a` 复验时，只有开机后第一次冷启动（pid 2174）在最终 pid 上有 `fast-arm`、`PATCHED`、`FATAL-THUNK-NEUTRALIZED`。立刻再拉起、空闲超过六分钟、以及 debug 三次，最终 pid 只有更早的 `fork-child`。出帧和进程还在，不能当成补丁打在这个 pid 上。debug 复用池仍会打 `Check failed: false`。
+
+构建侧用这张盘再开机，没有重装。release 立刻再拉起的最终 pid 2159 在 19:40:40 只有 `fork-child`，19:41:13 自己写下 `fast-arm`、`PATCHED`、`FATAL-THUNK-NEUTRALIZED`，19:41:22 `first-frame fired`。空闲六分钟和 debug 三次这次没有再跑。
 
 ## v4 源码（`docs/snippets/flutter_qemu_preload.c`，尚未替换 48012d5c 这张盘）
 

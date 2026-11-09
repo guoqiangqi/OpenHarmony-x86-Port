@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -81,11 +82,24 @@ static const unsigned char fatal_ret[8] = {
 typedef void *(*DlopenFn)(const char *, int);
 typedef pid_t (*ForkFn)(void);
 
+typedef int (*PrctlFn)(int, unsigned long, unsigned long, unsigned long,
+                       unsigned long);
+
 static DlopenFn real_dlopen;
 static ForkFn real_fork;
+static PrctlFn real_prctl;
 static int log_fd = -1;
 static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t patch_lock = PTHREAD_MUTEX_INITIALIZER;
+/* Prefork child blocks in read() for minutes. Its watcher can be stuck
+ * across the sandbox mount switch, or asleep for 20 ms, and then
+ * libflutter is mapped and Setup runs with the original bytes. prctl
+ * sets the app name after that switch and before the engine is loaded,
+ * so a second watcher started there still sees the mapping. */
+static volatile int patches_done;
+static volatile int want_fast;
+static volatile int fast_armed;
+static volatile int watcher_count;
 
 static long now_ms(void)
 {
@@ -353,21 +367,37 @@ static void apply_all_patches(pid_t pid)
  */
 /* ---- in-process watcher ------------------------------------------- */
 
+static void drop_rt(void)
+{
+    struct sched_param sp;
+
+    memset(&sp, 0, sizeof(sp));
+    /* appspawn is SCHED_FIFO. A child thread keeps that policy and can
+     * stall after setuid. This watcher only needs to wake up. */
+    (void)sched_setscheduler(0, SCHED_OTHER, &sp);
+}
+
 static void *self_watcher(void *unused)
 {
     long t0 = now_ms();
 
     (void)unused;
+    drop_rt();
     /*
-     * The child is forked before the app loads libflutter. Spin until the
-     * mapping appears so a hot page cache cannot run Rasterizer::Setup on
-     * the unpatched bytes. After that, poll slowly.
+     * The child is forked before the app loads libflutter. Poll until the
+     * mapping appears. want_fast is set when prctl renames the process
+     * away from apppool, which is after the sandbox switch and before
+     * the engine is loaded.
      */
     for (;;) {
         uintptr_t seg[MAX_CANDIDATES];
         uintptr_t seg_off[MAX_CANDIDATES];
         int fd, n, i, routed = 0, thunked = 0, debug_routed = 0, debug_ctx = 0;
 
+        if (patches_done) {
+            __sync_fetch_and_sub(&watcher_count, 1);
+            return NULL;
+        }
         n = candidates_of(getpid(), seg, seg_off, MAX_CANDIDATES);
         if (n > 0) {
             pthread_mutex_lock(&patch_lock);
@@ -404,18 +434,20 @@ static void *self_watcher(void *unused)
                 }
                 close(fd);
                 if ((debug_routed && debug_ctx) || (routed && thunked)) {
+                    patches_done = 1;
                     pthread_mutex_unlock(&patch_lock);
                     log_line("self watcher: done after %ld ms",
                              now_ms() - t0);
+                    __sync_fetch_and_sub(&watcher_count, 1);
                     return NULL;
                 }
             }
             pthread_mutex_unlock(&patch_lock);
         }
-        if (now_ms() - t0 < 10000)
+        if (want_fast || now_ms() - t0 < 10000)
             usleep(1000);
         else
-            usleep(50000);
+            usleep(20000);
     }
 }
 
@@ -428,14 +460,75 @@ static void *self_watcher(void *unused)
  * run in a fully valid pthread environment (unlike raw clone), which
  * the earlier crash with clone-hooking proved.
  */
-static void arm_child_watcher(void)
+static int start_watcher(void)
 {
     pthread_t thread;
 
-    if (pthread_create(&thread, NULL, self_watcher, NULL) == 0)
+    if (__sync_fetch_and_add(&watcher_count, 1) >= 2) {
+        __sync_fetch_and_sub(&watcher_count, 1);
+        return 0;
+    }
+    if (pthread_create(&thread, NULL, self_watcher, NULL) == 0) {
         (void)pthread_detach(thread);
+        return 1;
+    }
+    __sync_fetch_and_sub(&watcher_count, 1);
+    log_line("arm watcher failed errno=%d", errno);
+    return 0;
+}
+
+static void arm_child_watcher(void)
+{
+    (void)start_watcher();
+}
+
+/* Called on the main thread after the sandbox is built, before libflutter
+ * is mapped. One extra watcher: the prefork thread may be stuck or asleep. */
+static void arm_fast_watcher(const char *name)
+{
+    char shown[16];
+    size_t i;
+
+    want_fast = 1;
+    if (patches_done)
+        return;
+    if (__sync_val_compare_and_swap(&fast_armed, 0, 1) != 0)
+        return;
+    for (i = 0; i < sizeof(shown) - 1 && name[i]; i++)
+        shown[i] = name[i];
+    shown[i] = '\0';
+    if (start_watcher())
+        log_line("fast-arm %s", shown);
     else
-        log_line("arm child watcher failed errno=%d", errno);
+        fast_armed = 0;
+}
+
+int prctl(int option, unsigned long arg2, unsigned long arg3,
+          unsigned long arg4, unsigned long arg5)
+{
+    int rc;
+    const char *name;
+
+    if (!real_prctl)
+        real_prctl = (PrctlFn)dlsym(RTLD_NEXT, "prctl");
+    if (!real_prctl) {
+        errno = ENOSYS;
+        return -1;
+    }
+    rc = real_prctl(option, arg2, arg3, arg4, arg5);
+    /* PR_SET_NAME == 15. "apppool" is the idle prefork comm. */
+    if (rc == 0 && option == 15 && arg2 != 0) {
+        char tmp[16];
+        size_t i;
+
+        name = (const char *)arg2;
+        for (i = 0; i < sizeof(tmp) - 1 && name[i]; i++)
+            tmp[i] = name[i];
+        tmp[i] = '\0';
+        if (strcmp(tmp, "apppool") != 0 && strcmp(tmp, "appspawn") != 0)
+            arm_fast_watcher(tmp);
+    }
+    return rc;
 }
 
 /*
@@ -461,6 +554,10 @@ static void fork_child(void)
     pthread_mutex_init(&patch_lock, NULL);
     pthread_mutex_init(&log_lock, NULL);
     log_fd = -1;
+    patches_done = 0;
+    want_fast = 0;
+    fast_armed = 0;
+    watcher_count = 0;
     log_line("fork-child");
     arm_child_watcher();
 }
@@ -535,7 +632,8 @@ static void *scanner(void *unused)
                 if (pid)
                     (void)try_patch_process((pid_t)pid);
                 if (pid)
-                    (void)apply_all_patches((pid_t)pid);            }
+                    (void)apply_all_patches((pid_t)pid);
+            }
             closedir(dir);
         }
         usleep(50000);
@@ -572,7 +670,8 @@ static void qemu_flutter_preload_init(void)
     real_dlopen = (DlopenFn)dlsym(RTLD_NEXT, "dlopen");
 
     log_fd = open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
-    log_line("ctor: v3+debug ctx hold");
+    real_prctl = (PrctlFn)dlsym(RTLD_NEXT, "prctl");
+    log_line("ctor: v3+debug ctx fast");
 
     /*
      * The in-process watcher matters in spawned app processes. They are

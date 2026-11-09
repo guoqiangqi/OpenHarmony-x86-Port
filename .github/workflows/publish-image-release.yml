@@ -39,6 +39,11 @@ jobs:
           NAME="${{ github.event.inputs.asset_name || '' }}"
 
           case "$TAG" in
+            images-5.1.0-20261109-flutter-fastarm)
+              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261109-flutter-fastarm.tar.gz"
+              TITLE="OpenHarmony 5.1.0 x86_general images (20261109 Flutter fast-arm)"
+              NOTES_KIND=flutter_fastarm
+              ;;
             images-5.1.0-20261109-flutter-stayup)
               [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261109-flutter-stayup.tar.gz"
               TITLE="OpenHarmony 5.1.0 x86_general images (20261109 Flutter stay-up)"
@@ -142,6 +147,38 @@ jobs:
 
           - `ohos-5.1/patches/07-kernel-fs-verity-enable.patch`
           - `ohos-5.1/patches/08-code-sign-x86-statx-nr.patch`
+          EOF
+          elif [ "$NOTES_KIND" = "flutter_fastarm" ]; then
+            cat > "$NOTES_FILE" <<'EOF'
+          ## 内容
+
+          分区镜像包：解压后 `bash disk_assemble.sh ohos_disk.img`。
+          system / vendor / data 来自整盘 md5 `404b7caac52342e753e90492493ec783`。ESP 由脚本按包内 `bzImage` 重建。
+
+          相对 `images-5.1.0-20261109-flutter-stayup`（盘 `d42be74f`，preload `f17a3159`）：
+
+          - preload `12fd8e1a6d326158c81130a787f55007`（20824 字节）。`prctl` 把进程名改离 `apppool` 时再起一条 1ms watcher，日志是 `fast-arm`。前 10 秒仍是 1ms，之后空闲池是 20ms，补丁写上才退出。`apppool` 这个名字不写 `fast-arm`。
+          - 内核、看门狗、ratio 与上一版相同。不要 `hdc install` 覆盖盘上已经装好的包。新安装会在 code-sign 上失败（9568393 / errno 25），debug 包还会报空间不足（9568288）。
+
+          构建侧在这张盘上复验过 release 立刻再拉起：最终 pid 2159 先前只有 `fork-child`，拉起时自己写下 `fast-arm`、`PATCHED`、`FATAL-THUNK-NEUTRALIZED`，随后 `first-frame fired`。更早的 overlay 上，空闲约 7 分钟的 pid 2220 和 debug 池 pid 2440 也在最终 pid 上打过补丁。
+
+          使用侧用同一张盘、同一个 so 复验时，只有开机后第一次冷启动（pid 2174）在最终 pid 上有这三行。立刻再拉起、空闲超过六分钟、以及 debug 三次，最终 pid 只有更早的 `fork-child`。出帧不能当成补丁已经打在这个 pid 上。
+
+          旧 tag `images-5.1.0-20261109-flutter-stayup` 和 `images-5.1.0-20261105-flutter-v2` 保持不动。旧盘 md5 `48012d5c` 不要用来验收这一版。
+
+          ## 校验
+
+          ```bash
+          tar xzf OpenHarmony-5.1.0-x86_general-images-20261109-flutter-fastarm.tar.gz
+          cd OpenHarmony-5.1.0-x86_general-images-20261109-flutter-fastarm
+          md5sum -c md5.txt
+          bash disk_assemble.sh ohos_disk.img
+          ```
+
+          ## 源码
+
+          - `ohos-5.1/docs/snippets/flutter_qemu_preload.c`
+          - `ohos-5.1/docs/FLUTTER-GRAPHICS.md`
           EOF
           elif [ "$NOTES_KIND" = "flutter_stayup" ]; then
             cat > "$NOTES_FILE" <<'EOF'
