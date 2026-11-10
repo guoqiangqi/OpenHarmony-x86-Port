@@ -159,7 +159,7 @@ jobs:
 
           合并盘：新装 HAP 与 Flutter 运行同时成立。data 分区 2560M（镜像 5724M）。
 
-          **2026-11-10 Flutter 通用支持（取代 v5b 按 so 打补丁）**：`const.product.model=emulator`（`devicetype` 仍为 tablet，API 18 不变）。FlutterLoader 因此不传 `--enable-impeller`，引擎走 Skia GL（hilog `rendering_api=1`），不再绑定某一颗 `libflutter.so`。appspawn 不再 LD_PRELOAD `libvk_icd_force.z.so`。system.img md5 `c63728f0a7b94dff40cec7354a080184`。整盘 `991bd168` 作废。
+          **2026-11-10 Flutter 通用支持（按 so 打补丁已从镜像删除）**：`const.product.model=emulator`（`devicetype` 仍为 tablet，API 18 不变）。Flutter 走 Skia GL（hilog `rendering_api=1`），不再绑定 `libflutter.so`。镜像中没有 `libvk_icd_force.z.so`。保留锁屏旁路（否则任何 aa start 都是 10106102）和 appkit 看门狗 60s（否则软件渲染下 debug Flutter 会被 THREAD_BLOCK_6S 杀掉）。RN 与 ArkUI sample 走系统渲染，同一张盘可用。
 
           相对 `images-5.1.0-20261109-flutter-fastarm`（盘 `404b7ca`）：
 

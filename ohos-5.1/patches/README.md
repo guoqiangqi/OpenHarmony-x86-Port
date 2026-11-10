@@ -28,7 +28,7 @@
 | `modules_net/` | device/board/opc/x86_general/ | e1000.ko 打包 |
 | `zz_net_setup.cfg` | device/board/opc/x86_general/cfg/ | 网络固化配置 |
 | `gpu-chipsetsdk-libs/` | device/soc/opc/x86_general/hardware/gpu/lib64/chipsetsdk/ | 重编后的 mesa impl 库（二进制，也可从 ../../tools/mesa-libs/ 获取） |
-| `flutter-preload/` | 不再注入 | 历史产物：`libvk_icd_force.z.so` 按 so 偏移改指令，换一颗 `libflutter.so` 即失效。2026-11-10 起 Flutter 支持改由 `const.product.model=emulator` 承担（补丁 12），appspawn 不再 LD_PRELOAD 它。`libscreenlock_bypass.z.so` 仍按原方式进 foundation。 |
+| `flutter-preload/` | 不进镜像 | `libvk_icd_force.z.so` 按 so 偏移改指令，已从交付镜像删除。Flutter 走补丁 12 的 `productModel=emulator`。`libscreenlock_bypass.z.so` 仍只预加载进 foundation：这张盘没有锁屏界面，否则任何 `aa start` 都是 10106102。 |
 
 ## 应用方法
 

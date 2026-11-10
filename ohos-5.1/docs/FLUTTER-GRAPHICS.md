@@ -4,11 +4,14 @@
 
 Flutter OHOS 嵌入层（`FlutterLoader`）只在 `deviceInfo.productModel != "emulator"` 时才向引擎传 `--enable-impeller`。HarmonyOS 模拟器上报 `productModel=emulator`，所以走 Skia；这张 QEMU 盘原先上报 `general pc`，同一行判断放行，引擎进入 `kImpellerVulkan`。QEMU 只有 virtio-gpu + SwiftShader，没有 `VK_OHOS_native_buffer`，于是换一颗 `libflutter.so` 就在 Vulkan 路径上空指针崩溃。按文件偏移改指令只能保住已经对过字节的那一颗 so。
 
-修复：`/vendor/etc/param/product_x86_general.para`（系统分区内的这份，init 实际读取的就是它）把 `const.product.model` 改为 `emulator`。`const.product.devicetype` 仍是 `tablet`，`const.ohos.apiversion` 仍是 `18`。`deviceInfo.productModel` 读的就是 `const.product.model`。appspawn 不再 `LD_PRELOAD` `libvk_icd_force.z.so`。
+修复：系统分区 `/vendor/etc/param/product_x86_general.para` 的 `const.product.model="emulator"`。`const.product.devicetype` 仍是 `tablet`，`const.ohos.apiversion` 仍是 `18`。按 so 偏移改指令的 `libvk_icd_force.z.so` 已从镜像删除，appspawn 不再预加载它。
 
-引擎日志 `OhosMain init done, rendering_api=` 的取值（对 release/debug 两颗 so 的 `CreateSurface` 分发反汇编）：`0` 软件、`1` skia-gl、`2` impeller-vulkan。本盘上两颗不同的 so 都是 `1`。
+另外两处不是 Flutter so 专用、所有应用都需要，保留：
 
-复验（无 flpatch，qcow2 overlay）：release `io.flutter.examples.hello_world` 与 debug `com.example.my_flutter_app`（约 18MB / 39MB 两颗 so）均为 `rendering_api=1`、`first-frame fired`、进程留存；debug 立即再拉同样是 `1` 并出帧；`bm install` 重装 release 成功（没有 9568413）；`cppcrash` 为空；进程 maps 里没有 `libvk_icd_force`。
+- `libscreenlock_bypass.z.so` 只进 foundation。这张盘没有锁屏界面，不绕过的话任何 `aa start`（Flutter、RN、sample）都会 10106102。
+- `libappkit_native.z.so` 看门狗 3000ms 改为 60000ms（md5 `9e93c0787b5d37070c38bd61f127591f`，相对原版只改这两个字节）。改回 3000ms 后，debug Flutter 已经 `first-frame fired`，主线程在软件渲染里卡住，约 6 秒被 `THREAD_BLOCK_6S` 杀掉。这跟具体 so 无关。`persist.sys.abilityms.timeout_unit_time_ratio=24` 是这棵源码树的原值，没有另改。
+
+复验（无 flpatch）：release 与 debug 两颗 so 都是 `rendering_api=1`、`first-frame fired`，debug 停留超过 45 秒且没有 `THREAD_BLOCK_6S`；`com.ohos.settings` 与 sample `ohos.samples.distributedcalc`（`Calc_Demo.hap` 新装后启动）同时存活。
 
 下面各节是按 so 打补丁的历史，不再作为交付口径。
 
