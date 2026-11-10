@@ -344,8 +344,11 @@ jobs:
         run: |
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets \
               --jq '.assets[].name' | grep -Fx "$NAME"; then
-            echo "Asset $NAME already on release; done"
-            exit 0
+            echo "Asset $NAME already on release; deleting and re-uploading"
+            ASSET_ID=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" \
+              --json assets --jq ".assets[] | select(.name == \"$NAME\") | .id")
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" || true
+            sleep 5
           fi
           echo "Downloading $URL ..."
           curl -fL --retry 5 --retry-delay 5 -o "$NAME" "$URL"
