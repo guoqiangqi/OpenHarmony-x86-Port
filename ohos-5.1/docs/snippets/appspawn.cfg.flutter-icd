@@ -87,10 +87,6 @@
                 {
                     "name": "LIBGL_ALWAYS_SOFTWARE",
                     "value": "1"
-                },
-                {
-                    "name": "LD_PRELOAD",
-                    "value": "/system/lib64/libvk_icd_force.z.so"
                 }
             ]
         }

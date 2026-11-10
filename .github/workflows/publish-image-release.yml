@@ -157,17 +157,15 @@ jobs:
             cat > "$NOTES_FILE" <<'EOF'
           ## 内容
 
-          合并盘：新装 HAP 与 Flutter 进程留存同时成立。data 分区 2560M（镜像 5724M），`disk_assemble.sh` 已按新布局更新。
+          合并盘：新装 HAP 与 Flutter 运行同时成立。data 分区 2560M（镜像 5724M）。
 
-          **2026-11-10 v5b 更新（整盘 md5 `991bd168884f5726c73dac1cdb1bfc2a`，preload `2d7382bc3d6a9c72d8a9b5aa47796526`）**：两条旧"已知行为"已从源头消除——① debug `dl_sk_dispatcher.cc(328) Check failed: false` 不再打印（新增 debug fatal 补丁点 `0x18837e0`，hilog 零残留）；② 补丁行永远归属目标 pid（父扫描代打时日志为 `PATCHED-DEBUG pid=<目标>`，目标 pid 名下必有 `self-patched backend sites` / `already-patched by parent scanner` 行）。
+          **2026-11-10 Flutter 通用支持（取代 v5b 按 so 打补丁）**：`const.product.model=emulator`（`devicetype` 仍为 tablet，API 18 不变）。FlutterLoader 因此不传 `--enable-impeller`，引擎走 Skia GL（hilog `rendering_api=1`），不再绑定某一颗 `libflutter.so`。appspawn 不再 LD_PRELOAD `libvk_icd_force.z.so`。system.img md5 `c63728f0a7b94dff40cec7354a080184`。整盘 `991bd168` 作废。
 
           相对 `images-5.1.0-20261109-flutter-fastarm`（盘 `404b7ca`）：
 
-          - 内核 `6.6.86 #6`（bzImage `7b8fd4da`）：`fs/ext4/ioctl.c` 补上 `FS_IOC_ENABLE_CODE_SIGN`（新装 9568393 ENOTTY 的根因），恢复 `fs/verity/sysfs.c`（`/sys/fs/verity/features`）。
-          - preload v5b `2d7382bc3d6a9c72d8a9b5aa47796526`（新增 debug fatal 中和 + pid 归属标签），看门狗 60s 与 ratio 24 不变。
+          - 内核 `6.6.86 #6`（bzImage `7b8fd4da`）：`fs/ext4/ioctl.c` 补上 `FS_IOC_ENABLE_CODE_SIGN`（新装 9568393），`/sys/fs/verity/features` 在。
           - data 1536M→2560M：92MB debug HAP 新装不再 9568288。
-
-          全矩阵复验（2026-11-09 首测 + 2026-11-10 v5b 复测，构建侧，先卸载再全新安装）：两个 HAP 全新安装成功（code sign ret=0）；release/debug × 冷启动、立即再拉（v5b 下 debug 连续 5 次快拉）、空闲>6 分钟，最终 pid 均有 fast-arm + PATCHED/FATAL（debug 为 PATCHED-DEBUG/CTX + debug fatal）+ first-frame fired + 52 秒留存；hilog 无 `Check failed`；重启后新装 HAP 可读、再启动仍出帧留存；无新 cppcrash。
+          - Flutter：productModel=emulator，release 与 debug 两颗不同 so 均 `rendering_api=1` + `first-frame fired`，无 flpatch，无新 cppcrash。重装 HAP 成功。
 
           ## 校验
 

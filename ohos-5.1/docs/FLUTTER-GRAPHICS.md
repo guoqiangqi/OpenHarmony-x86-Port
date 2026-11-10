@@ -1,5 +1,17 @@
 # OpenHarmony 5.1 x86 QEMU：Flutter 评测 HAP 运行时修复
 
+## 当前机制（2026-11-10，不再按 so 打补丁）
+
+Flutter OHOS 嵌入层（`FlutterLoader`）只在 `deviceInfo.productModel != "emulator"` 时才向引擎传 `--enable-impeller`。HarmonyOS 模拟器上报 `productModel=emulator`，所以走 Skia；这张 QEMU 盘原先上报 `general pc`，同一行判断放行，引擎进入 `kImpellerVulkan`。QEMU 只有 virtio-gpu + SwiftShader，没有 `VK_OHOS_native_buffer`，于是换一颗 `libflutter.so` 就在 Vulkan 路径上空指针崩溃。按文件偏移改指令只能保住已经对过字节的那一颗 so。
+
+修复：`/vendor/etc/param/product_x86_general.para`（系统分区内的这份，init 实际读取的就是它）把 `const.product.model` 改为 `emulator`。`const.product.devicetype` 仍是 `tablet`，`const.ohos.apiversion` 仍是 `18`。`deviceInfo.productModel` 读的就是 `const.product.model`。appspawn 不再 `LD_PRELOAD` `libvk_icd_force.z.so`。
+
+引擎日志 `OhosMain init done, rendering_api=` 的取值（对 release/debug 两颗 so 的 `CreateSurface` 分发反汇编）：`0` 软件、`1` skia-gl、`2` impeller-vulkan。本盘上两颗不同的 so 都是 `1`。
+
+复验（无 flpatch，qcow2 overlay）：release `io.flutter.examples.hello_world` 与 debug `com.example.my_flutter_app`（约 18MB / 39MB 两颗 so）均为 `rendering_api=1`、`first-frame fired`、进程留存；debug 立即再拉同样是 `1` 并出帧；`bm install` 重装 release 成功（没有 9568413）；`cppcrash` 为空；进程 maps 里没有 `libvk_icd_force`。
+
+下面各节是按 so 打补丁的历史，不再作为交付口径。
+
 ## 交付口径（使用侧按这个验收，不要按「已彻底修复」）
 
 已发布基盘 `ohos_disk_51_verity.img` md5 `48012d5c0e2670075ee6c2c0d1aed43c`

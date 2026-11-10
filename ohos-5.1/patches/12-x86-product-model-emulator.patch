@@ -1,0 +1,12 @@
+diff --git a/vendor/opc/x86_general/etc/para/product_x86_general.para b/vendor/opc/x86_general/etc/para/product_x86_general.para
+--- a/vendor/opc/x86_general/etc/para/product_x86_general.para
++++ b/vendor/opc/x86_general/etc/para/product_x86_general.para
+@@ -14,7 +14,7 @@
+ const.product.brand=general
+ const.build.product=default
+ const.product.name="general pc"
+-const.product.model="general pc"
++const.product.model="emulator"
+ const.product.manufacturer=general
+ const.security.developermode.state=true
+ const.product.devicetype=tablet
