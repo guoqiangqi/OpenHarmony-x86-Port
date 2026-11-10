@@ -63,6 +63,15 @@
  * the op into a harmless no-op so rasterization continues instead of
  * FML-killing the raster thread (which wedges first-frame delivery and
  * makes the watchdog flag FlutterUiThread as not alive).
+ *
+ * Debug engine fatal site: file offset 0x18837e0 (vaddr 0x18847e0) is
+ * the same dl_sk_dispatcher.cc(328) checker compiled into the debug
+ * build: `push %rbx; sub $0x120,%rsp`, file string 0x17f262, line 328,
+ * "false" at 0x16e26b, no rel32 callers (op-table referenced only).
+ * Unlike the release build the debug checker only LOGS (HiLog fatal
+ * without abort), but the residue upsets log-based acceptance, so it
+ * gets the identical `ret` neutralization and the line disappears at
+ * the source.
  */
 
 #define LOG_PATH "/data/log/flpatch.log"
@@ -169,8 +178,23 @@ static const unsigned char debug_ctx_replacement[5] = {
     0x83, 0xfd, 0x02, 0xeb, 0x43
 };
 
+/* Debug engine dl_sk_dispatcher.cc(328) checker (see header). Same
+ * push/sub prologue as the release fatal thunk, so fatal_expected
+ * matches and patch_fatal_thunk() is reused verbatim. */
+#define FILE_OFF_DEBUG_FATAL 0x18837e0u
+
 /* Patch through an already-open /proc/<pid>/mem fd. */
+static int patch_fd_tag(int fd, uintptr_t addr, int log_fail,
+                        const char *tag);
+static int patch_fatal_thunk_tag(int fd, uintptr_t addr, const char *tag);
+
 static int patch_fd(int fd, uintptr_t addr, int log_fail)
+{
+    return patch_fd_tag(fd, addr, log_fail, "PATCHED");
+}
+
+static int patch_fd_tag(int fd, uintptr_t addr, int log_fail,
+                        const char *tag)
 {
     unsigned char cur[sizeof(expected_bytes)];
     ssize_t r, w;
@@ -193,7 +217,7 @@ static int patch_fd(int fd, uintptr_t addr, int log_fail)
     r = pread(fd, cur, sizeof(cur), (off_t)addr);
     if (r == (ssize_t)sizeof(cur) &&
         memcmp(cur, replacement_bytes, sizeof(replacement_bytes)) == 0) {
-        log_line("PATCHED addr=0x%lx", (unsigned long)addr);
+        log_line("%s addr=0x%lx", tag, (unsigned long)addr);
         return 1;
     }
     return 0;
@@ -225,9 +249,14 @@ static int patch_debug_site(int fd, uintptr_t addr, const unsigned char *expect,
     }
     return 0;
 }
-
 /* Neutralize the dl_sk_dispatcher fatal-check thunk (see header). */
+static int patch_fatal_thunk_tag(int fd, uintptr_t addr, const char *tag);
 static int patch_fatal_thunk(int fd, uintptr_t addr)
+{
+    return patch_fatal_thunk_tag(fd, addr, "FATAL-THUNK-NEUTRALIZED");
+}
+
+static int patch_fatal_thunk_tag(int fd, uintptr_t addr, const char *tag)
 {
     unsigned char cur[8];
     ssize_t r, w;
@@ -245,7 +274,7 @@ static int patch_fatal_thunk(int fd, uintptr_t addr)
     r = pread(fd, cur, sizeof(cur), (off_t)addr);
     if (r == (ssize_t)sizeof(cur) &&
         memcmp(cur, fatal_ret, sizeof(fatal_ret)) == 0) {
-        log_line("FATAL-THUNK-NEUTRALIZED addr=0x%lx", (unsigned long)addr);
+        log_line("%s addr=0x%lx", tag, (unsigned long)addr);
         return 1;
     }
     return 0;
@@ -314,7 +343,9 @@ static void apply_all_patches(pid_t pid)
     uintptr_t seg[MAX_CANDIDATES];
     uintptr_t seg_off[MAX_CANDIDATES];
     char path[64];
+    char rtag[64], ttag[64], drtag[64], dctag[64], dftag[64];
     int fd, n, i, routed = 0, thunked = 0, debug_routed = 0, debug_ctx = 0;
+    int debug_fatal = 0;
 
     pthread_mutex_lock(&patch_lock);
     n = candidates_of(pid, seg, seg_off, MAX_CANDIDATES);
@@ -328,17 +359,24 @@ static void apply_all_patches(pid_t pid)
         pthread_mutex_unlock(&patch_lock);
         return;
     }
+    /* Parent-scanner patch lines are tagged with the TARGET pid so the
+     * log never attributes another process's patch to appspawn. */
+    snprintf(rtag, sizeof(rtag), "PATCHED pid=%d", (int)pid);
+    snprintf(ttag, sizeof(ttag), "FATAL-THUNK-NEUTRALIZED pid=%d", (int)pid);
+    snprintf(drtag, sizeof(drtag), "PATCHED-DEBUG pid=%d", (int)pid);
+    snprintf(dctag, sizeof(dctag), "PATCHED-DEBUG-CTX pid=%d", (int)pid);
+    snprintf(dftag, sizeof(dftag), "FATAL-THUNK-DEBUG pid=%d", (int)pid);
     for (i = 0; i < n; i++) {
         uintptr_t a;
         if (!routed) {
             a = site_addr(seg[i], seg_off[i], FILE_OFF);
-            if (a && patch_fd(fd, a, pid == getpid()))
+            if (a && patch_fd_tag(fd, a, pid == getpid(), rtag))
                 routed = 1;
         }
         if (!debug_routed) {
             a = site_addr(seg[i], seg_off[i], FILE_OFF_DEBUG);
             if (a && patch_debug_site(fd, a, debug_expected, debug_replacement,
-                                      sizeof(debug_expected), "PATCHED-DEBUG"))
+                                      sizeof(debug_expected), drtag))
                 debug_routed = 1;
         }
         if (!debug_ctx) {
@@ -346,13 +384,18 @@ static void apply_all_patches(pid_t pid)
             if (a && patch_debug_site(fd, a, debug_ctx_expected,
                                       debug_ctx_replacement,
                                       sizeof(debug_ctx_expected),
-                                      "PATCHED-DEBUG-CTX"))
+                                      dctag))
                 debug_ctx = 1;
         }
         if (!thunked) {
             a = site_addr(seg[i], seg_off[i], 0x4a1500u);
-            if (a && patch_fatal_thunk(fd, a))
+            if (a && patch_fatal_thunk_tag(fd, a, ttag))
                 thunked = 1;
+        }
+        if (!debug_fatal) {
+            a = site_addr(seg[i], seg_off[i], FILE_OFF_DEBUG_FATAL);
+            if (a && patch_fatal_thunk_tag(fd, a, dftag))
+                debug_fatal = 1;
         }
     }
     (void)debug_routed;
@@ -393,6 +436,7 @@ static void *self_watcher(void *unused)
         uintptr_t seg[MAX_CANDIDATES];
         uintptr_t seg_off[MAX_CANDIDATES];
         int fd, n, i, routed = 0, thunked = 0, debug_routed = 0, debug_ctx = 0;
+        int debug_fatal = 0;
 
         if (patches_done) {
             __sync_fetch_and_sub(&watcher_count, 1);
@@ -431,11 +475,27 @@ static void *self_watcher(void *unused)
                         if (a && patch_fatal_thunk(fd, a))
                             thunked = 1;
                     }
+                    if (!debug_fatal) {
+                        a = site_addr(seg[i], seg_off[i],
+                                      FILE_OFF_DEBUG_FATAL);
+                        if (a && patch_fatal_thunk(fd, a))
+                            debug_fatal = 1;
+                    }
                 }
                 close(fd);
-                if ((debug_routed && debug_ctx) || (routed && thunked)) {
+                if ((debug_routed && debug_ctx && debug_fatal) ||
+                    (routed && thunked)) {
                     patches_done = 1;
                     pthread_mutex_unlock(&patch_lock);
+                    /* The parent scanner may have won the race and
+                     * patched remotely; its line carries appspawn's
+                     * pid prefix (message tagged with our pid).
+                     * Always leave evidence under THIS pid too so
+                     * per-pid greps never come up empty. */
+                    if (routed || debug_routed || debug_ctx)
+                        log_line("self-patched backend sites");
+                    else
+                        log_line("already-patched by parent scanner");
                     log_line("self watcher: done after %ld ms",
                              now_ms() - t0);
                     __sync_fetch_and_sub(&watcher_count, 1);
@@ -580,6 +640,7 @@ static int try_patch_process(pid_t pid)
     uintptr_t seg[MAX_CANDIDATES];
     uintptr_t seg_off[MAX_CANDIDATES];
     char path[64];
+    char rtag[64];
     int fd, n, i;
 
     pthread_mutex_lock(&patch_lock);
@@ -594,9 +655,10 @@ static int try_patch_process(pid_t pid)
         pthread_mutex_unlock(&patch_lock);
         return 0;
     }
+    snprintf(rtag, sizeof(rtag), "PATCHED pid=%d", (int)pid);
     for (i = 0; i < n; i++) {
         uintptr_t a = site_addr(seg[i], seg_off[i], FILE_OFF);
-        if (a && patch_fd(fd, a, 0)) {
+        if (a && patch_fd_tag(fd, a, 0, rtag)) {
             close(fd);
             pthread_mutex_unlock(&patch_lock);
             return 1;
@@ -671,7 +733,7 @@ static void qemu_flutter_preload_init(void)
 
     log_fd = open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
     real_prctl = (PrctlFn)dlsym(RTLD_NEXT, "prctl");
-    log_line("ctor: v3+debug ctx fast");
+    log_line("ctor: v5+debug-fatal pid-tag");
 
     /*
      * The in-process watcher matters in spawned app processes. They are

@@ -53,7 +53,7 @@ loader 上的入口门（v4 的 VULKAN-GUARD）已从实际打补丁路径拿掉
 
 | 改动 | 位置 |
 |------|------|
-| flpatch md5 `12fd8e1a6d326158c81130a787f55007`（进程被改名离开 apppool 时再挂一个快轮询） | `/system/lib64/libvk_icd_force.z.so` |
+| flpatch md5 `2d7382bc3d6a9c72d8a9b5aa47796526`（v5b：进程改名离开 apppool 挂快轮询 + debug fatal 中和 + 补丁行带目标 pid；2026-11-10 起生效，旧 v3 `12fd8e1a`） | `/system/lib64/libvk_icd_force.z.so` |
 | `libappkit_native.z.so` 看门狗周期 3000ms 改为 60000ms，md5 `9e93c0787b5d37070c38bd61f127591f` | `/system/lib64/platformsdk/libappkit_native.z.so` |
 | `persist.sys.abilityms.timeout_unit_time_ratio = 24`（前台超时约 120s） | `/system/etc/param/appfwk.para` |
 | 内核读 code-sign 描述符时，hook 返回 1 就跳过 `__reserved` 和 `data_size == i_size`；btrfs 接受 `FS_IOC_ENABLE_CODE_SIGN`；密钥环为空且 `require_signatures=0` 时不再 `-ENOKEY` | ESP `bzImage`，`uname -v` 为 `#4 SMP PREEMPT_DYNAMIC Mon Nov 9 00:40:31 CST 2026`。四个模块（virtio-gpu、virtio_dma_buf、drm_shmem_helper、e1000）与这颗内核一起换过 |
@@ -110,9 +110,18 @@ stayup 盘新装失败的根因在内核 #4 的 `fs/ext4/ioctl.c`：`FS_IOC_ENAB
 
 92MB debug HAP 新装仍然 9568288：`CheckSystemSize` 用 `max(2*hap, 512MiB)` 对 `/data/app/el1/bundle` 的 statfs，1.5GB 的 /data 在装包过程中（entry_tmp 拷贝与源 hap 并存）落到 512MiB 线以下。清掉 /data/log 后 avail 回到约 660MB 仍不够，因为检查时安装副本已经占了空间。这是 data 分区容量问题，不是两条修复线的问题；盘上预装的 `com.example.my_flutter_app` 不受影响，20MB 级新签名包装得进、装得上、装完能跑。
 
-### 最终版：data 扩容 + 全矩阵（md5 `f5ca21a4`）
+### 最终版：data 扩容 + 全矩阵（md5 `f5ca21a4` → 2026-11-10 v5b `991bd168`）
 
 把 p4 从 1536M 扩到 2750M（镜像 5724M，文件系统 resize2fs 到 687395 块）之后，92MB debug 新装不再 9568288。整盘 md5 `f5ca21a4c9a55688852015bb8c2a23f1`，内核仍是 #6 `7b8fd4da`，preload `12fd8e1a`。发布包 `images-5.1.0-20261109-flutter-merge`（`disk_assemble.sh` 按 512M/2016M/512M/2750M 新布局，ESP 用 mtools 构建）。
+
+**2026-11-10 v5b 更新（整盘 `991bd168884f5726c73dac1cdb1bfc2a`，preload `2d7382bc3d6a9c72d8a9b5aa47796526`）**：使用侧反馈两条"已知行为"有误判风险（验收 grep 目标 pid 名下的补丁行；`Check failed: false` 残留被视为故障嫌疑），于是从源头消除而不是写进说明让人忽略：
+
+1. **debug fatal 补丁点**：debug 引擎（Build 6646ddaf）里 `dl_sk_dispatcher.cc(328)` 的 checker 在 file offset `0x18837e0`（vaddr `0x18847e0`），序言与 release fatal thunk 同签名 `53 48 81 ec 20 01 00 00`（`push rbx; sub rsp,0x120`），文件名串 `0x17f262`、`false` 串 `0x16e26b`、行号 `0x148`、无 rel32 caller。复用 `patch_fatal_thunk()` 以 `ret` 中和 → `Check failed: false` 从 hilog 消失。
+2. **pid 归属**：父扫描器两条路径（`try_patch_process` 与 `apply_all_patches`）的补丁行改为 `PATCHED(-DEBUG) pid=<目标>`；子 watcher 完成时无论竞速输赢都在自己 pid 名下打 `self-patched backend sites`（自赢）或 `already-patched by parent scanner`（父先代打）。`grep "pid=<目标> "` 永远有证据行。
+3. debug 分支完成条件从 `debug_routed && debug_ctx` 收紧为 `debug_routed && debug_ctx && debug_fatal`。
+4. 基础盘 `/data/log/flpatch.log` 历史清空，开机后从 v5b ctor 行开始。
+
+v5b 复验（qcow2 overlay，2026-11-10 上午）：新装 20MB release + 92MB debug 成功；release 冷启动/立即再拉（pid 2199/2202）、debug 冷启动 + 连续 5 次快拉（pid 2360/2430/2583/2661/2731/2805）全部目标 pid 名下三行补丁 + `first-frame fired` + 52s 留存；重启后两包仍在、release pid 2165 / debug pid 2168 出帧留存；hilog `Check failed` 0 条（仅 HDC 命令回显）；`cppcrash` 空。
 
 在这张盘上（qcow2 overlay）的最终矩阵，全部先 `bm uninstall` 再全新 `bm install`：
 
