@@ -39,6 +39,11 @@ jobs:
           NAME="${{ github.event.inputs.asset_name || '' }}"
 
           case "$TAG" in
+            images-5.1.0-20261112-phone)
+              [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261112-phone.tar.gz"
+              TITLE="OpenHarmony 5.1.0 x86_general images (20261112 phone immersive)"
+              NOTES_KIND=phone
+              ;;
             images-5.1.0-20261109-flutter-merge)
               [ -n "$NAME" ] || NAME="OpenHarmony-5.1.0-x86_general-images-20261109-flutter-merge.tar.gz"
               TITLE="OpenHarmony 5.1.0 x86_general images (20261109 Flutter merge)"
@@ -152,6 +157,39 @@ jobs:
 
           - `ohos-5.1/patches/07-kernel-fs-verity-enable.patch`
           - `ohos-5.1/patches/08-code-sign-x86-statx-nr.patch`
+          EOF
+          elif [ "$NOTES_KIND" = "phone" ]; then
+            cat > "$NOTES_FILE" <<'EOF'
+          ## 内容
+
+          手机沉浸式分区包。解压后 `bash disk_assemble.sh ohos_disk.img`。`const.product.model` 仍是 `emulator`（Flutter 走 Skia），API 18，x86_64，fs-verity / 官方签名链不变。
+
+          相对 `images-5.1.0-20261109-flutter-merge`（那张盘仍是 tablet + general pc，不要混用）：
+
+          - `devicetype=phone`，`product.name=ohos phone`，`const.window.multiWindowUIType=HandsetSmartWindow`
+          - 主窗默认全屏（mode 1），标题栏关闭
+          - `const.bms.supportAppTypes=phone,tablet`：只声明 phone 或只声明 tablet 的 HAP 都能安装
+          - 不跑 sceneboard。`WindowImpl` 接受 `windowRectChange` / `systemDensityChange` / `windowStatusChange`，`getWindowDecorVisible` 为 false、`getWindowDecorHeight` 为 0。未改的 RNOH Sample 可以走过 `setWindowLayoutFullScreen(true)` 并 `loadContent`
+
+          构建侧整盘 md5 `8927e610ff51689aed74f4da5ede3ee9`（system `e7940f4db6127adad703bbf1a875eb31`）。本包的 system.img 与该盘一致；vendor / data / 内核与 20261109-flutter-merge 相同。拼盘会重做 ESP，整盘 md5 不会等于 `8927e610`。
+
+          `getUIContext().getMaxFontScale()` 在 `loadContent` 完成前仍会返回 1300002（页面内容还不存在）。内容加载后同一条路径不再报错。Flutter 的 `windowTitleButtonRectChange` 801 是 PC 标题按钮，RNOH 不订阅。
+
+          ## 校验
+
+          ```bash
+          tar xzf OpenHarmony-5.1.0-x86_general-images-20261112-phone.tar.gz
+          cd OpenHarmony-5.1.0-x86_general-images-20261112-phone
+          md5sum -c md5.txt
+          bash disk_assemble.sh ohos_disk.img
+          ```
+
+          `param get const.product.model` = emulator，`devicetype` = phone，`const.product.name` = ohos phone，`const.window.multiWindowUIType` = HandsetSmartWindow，`const.bms.supportAppTypes` = phone,tablet。
+
+          ## 源码补丁
+
+          - `ohos-5.1/patches/13-x86-phone-immersive-window.patch`
+          - `ohos-5.1/patches/14-windowimpl-phone-listeners-decor.patch`
           EOF
           elif [ "$NOTES_KIND" = "flutter_merge" ]; then
             cat > "$NOTES_FILE" <<'EOF'

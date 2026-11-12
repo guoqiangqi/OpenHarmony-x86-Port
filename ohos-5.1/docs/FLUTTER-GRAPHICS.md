@@ -4,7 +4,9 @@
 
 Flutter OHOS 嵌入层（`FlutterLoader`）只在 `deviceInfo.productModel != "emulator"` 时才向引擎传 `--enable-impeller`。HarmonyOS 模拟器上报 `productModel=emulator`，所以走 Skia；这张 QEMU 盘原先上报 `general pc`，同一行判断放行，引擎进入 `kImpellerVulkan`。QEMU 只有 virtio-gpu + SwiftShader，没有 `VK_OHOS_native_buffer`，于是换一颗 `libflutter.so` 就在 Vulkan 路径上空指针崩溃。按文件偏移改指令只能保住已经对过字节的那一颗 so。
 
-修复：系统分区 `/vendor/etc/param/product_x86_general.para` 的 `const.product.model="emulator"`。`const.product.devicetype` 仍是 `tablet`，`const.ohos.apiversion` 仍是 `18`。按 so 偏移改指令的 `libvk_icd_force.z.so` 已从镜像删除，appspawn 不再预加载它。
+修复：系统分区 `/vendor/etc/param/product_x86_general.para` 的 `const.product.model="emulator"`。`const.ohos.apiversion` 仍是 `18`。按 so 偏移改指令的 `libvk_icd_force.z.so` 已从镜像删除，appspawn 不再预加载它。
+
+2026-11-12 的手机盘在此之上把 `devicetype` 改为 `phone`（`product.name=ohos phone`，`HandsetSmartWindow`，默认全屏且无标题栏）。`const.bms.supportAppTypes=phone,tablet`，只声明 tablet 的 HAP 仍能安装。`model=emulator` 不变，Flutter 仍走 Skia。详见补丁 13、14。11-10 那张盘的 `devicetype` 仍是 `tablet`。
 
 另外两处不是 Flutter so 专用、所有应用都需要，保留：
 

@@ -1,0 +1,116 @@
+diff --git a/wm/include/window_impl.h b/wm/include/window_impl.h
+index 8b754b0493..f238d40616 100644
+--- a/wm/include/window_impl.h
++++ b/wm/include/window_impl.h
+@@ -236,6 +236,19 @@ public:
+ 
+     virtual WMError RegisterLifeCycleListener(const sptr<IWindowLifeCycle>& listener) override;
+     virtual WMError RegisterWindowChangeListener(const sptr<IWindowChangeListener>& listener) override;
++    // Legacy WindowImpl (no sceneboard) must accept the same listeners the phone
++    // scene-session window accepts. Otherwise ArkUI throws 801 and RNOH aborts
++    // before setWindowLayoutFullScreen / loadContent.
++    virtual WMError RegisterWindowRectChangeListener(const sptr<IWindowRectChangeListener>& listener) override;
++    virtual WMError UnregisterWindowRectChangeListener(const sptr<IWindowRectChangeListener>& listener) override;
++    virtual WMError RegisterSystemDensityChangeListener(const ISystemDensityChangeListenerSptr& listener) override;
++    virtual WMError UnregisterSystemDensityChangeListener(const ISystemDensityChangeListenerSptr& listener) override;
++    virtual WMError RegisterWindowStatusChangeListener(const sptr<IWindowStatusChangeListener>& listener) override;
++    virtual WMError UnregisterWindowStatusChangeListener(const sptr<IWindowStatusChangeListener>& listener) override;
++    // Phone window has no title-bar decor. Report that instead of 801 so
++    // getWindowDecorVisible / getWindowDecorHeight succeed with false / 0.
++    virtual WMError GetDecorVisible(bool& isVisible) override;
++    virtual WMError GetDecorHeight(int32_t& height) override;
+     virtual WMError UnregisterLifeCycleListener(const sptr<IWindowLifeCycle>& listener) override;
+     virtual WMError UnregisterWindowChangeListener(const sptr<IWindowChangeListener>& listener) override;
+     virtual WMError RegisterAvoidAreaChangeListener(const sptr<IAvoidAreaChangedListener>& listener) override;
+@@ -498,6 +511,9 @@ private:
+     static std::map<uint32_t, std::vector<sptr<IDialogTargetTouchListener>>> dialogTargetTouchListeners_;
+     static std::map<uint32_t, std::vector<sptr<IWindowLifeCycle>>> lifecycleListeners_;
+     static std::map<uint32_t, std::vector<sptr<IWindowChangeListener>>> windowChangeListeners_;
++    static std::map<uint32_t, std::vector<sptr<IWindowRectChangeListener>>> windowRectChangeListeners_;
++    static std::map<uint32_t, std::vector<ISystemDensityChangeListenerSptr>> systemDensityChangeListeners_;
++    static std::map<uint32_t, std::vector<sptr<IWindowStatusChangeListener>>> windowStatusChangeListeners_;
+     static std::map<uint32_t, std::vector<sptr<IAvoidAreaChangedListener>>> avoidAreaChangeListeners_;
+     std::vector<sptr<IWindowDragListener>> windowDragListeners_;
+     std::vector<sptr<IDisplayMoveListener>> displayMoveListeners_;
+diff --git a/wm/src/window_impl.cpp b/wm/src/window_impl.cpp
+index da3e0fad0d..d261e08def 100644
+--- a/wm/src/window_impl.cpp
++++ b/wm/src/window_impl.cpp
+@@ -92,6 +92,9 @@ std::map<uint32_t, std::vector<sptr<ITouchOutsideListener>>> WindowImpl::touchOu
+ std::map<uint32_t, std::vector<sptr<IDialogTargetTouchListener>>> WindowImpl::dialogTargetTouchListeners_;
+ std::map<uint32_t, std::vector<sptr<IWindowLifeCycle>>> WindowImpl::lifecycleListeners_;
+ std::map<uint32_t, std::vector<sptr<IWindowChangeListener>>> WindowImpl::windowChangeListeners_;
++std::map<uint32_t, std::vector<sptr<IWindowRectChangeListener>>> WindowImpl::windowRectChangeListeners_;
++std::map<uint32_t, std::vector<ISystemDensityChangeListenerSptr>> WindowImpl::systemDensityChangeListeners_;
++std::map<uint32_t, std::vector<sptr<IWindowStatusChangeListener>>> WindowImpl::windowStatusChangeListeners_;
+ std::map<uint32_t, std::vector<sptr<IAvoidAreaChangedListener>>> WindowImpl::avoidAreaChangeListeners_;
+ std::map<uint32_t, std::vector<sptr<IOccupiedAreaChangeListener>>> WindowImpl::occupiedAreaChangeListeners_;
+ std::map<uint32_t, sptr<IDialogDeathRecipientListener>> WindowImpl::dialogDeathRecipientListener_;
+@@ -2455,6 +2458,57 @@ WMError WindowImpl::RegisterWindowChangeListener(const sptr<IWindowChangeListene
+     return RegisterListener(windowChangeListeners_[GetWindowId()], listener);
+ }
+ 
++WMError WindowImpl::RegisterWindowRectChangeListener(const sptr<IWindowRectChangeListener>& listener)
++{
++    WLOGI("Register windowRectChange, winId:%{public}u", GetWindowId());
++    std::lock_guard<std::recursive_mutex> lock(globalMutex_);
++    return RegisterListener(windowRectChangeListeners_[GetWindowId()], listener);
++}
++
++WMError WindowImpl::UnregisterWindowRectChangeListener(const sptr<IWindowRectChangeListener>& listener)
++{
++    std::lock_guard<std::recursive_mutex> lock(globalMutex_);
++    return UnregisterListener(windowRectChangeListeners_[GetWindowId()], listener);
++}
++
++WMError WindowImpl::RegisterSystemDensityChangeListener(const ISystemDensityChangeListenerSptr& listener)
++{
++    WLOGI("Register systemDensityChange, winId:%{public}u", GetWindowId());
++    std::lock_guard<std::recursive_mutex> lock(globalMutex_);
++    return RegisterListener(systemDensityChangeListeners_[GetWindowId()], listener);
++}
++
++WMError WindowImpl::UnregisterSystemDensityChangeListener(const ISystemDensityChangeListenerSptr& listener)
++{
++    std::lock_guard<std::recursive_mutex> lock(globalMutex_);
++    return UnregisterListener(systemDensityChangeListeners_[GetWindowId()], listener);
++}
++
++WMError WindowImpl::RegisterWindowStatusChangeListener(const sptr<IWindowStatusChangeListener>& listener)
++{
++    WLOGI("Register windowStatusChange, winId:%{public}u", GetWindowId());
++    std::lock_guard<std::recursive_mutex> lock(globalMutex_);
++    return RegisterListener(windowStatusChangeListeners_[GetWindowId()], listener);
++}
++
++WMError WindowImpl::UnregisterWindowStatusChangeListener(const sptr<IWindowStatusChangeListener>& listener)
++{
++    std::lock_guard<std::recursive_mutex> lock(globalMutex_);
++    return UnregisterListener(windowStatusChangeListeners_[GetWindowId()], listener);
++}
++
++WMError WindowImpl::GetDecorVisible(bool& isVisible)
++{
++    isVisible = false;
++    return WMError::WM_OK;
++}
++
++WMError WindowImpl::GetDecorHeight(int32_t& height)
++{
++    height = 0;
++    return WMError::WM_OK;
++}
++
+ WMError WindowImpl::UnregisterWindowChangeListener(const sptr<IWindowChangeListener>& listener)
+ {
+     WLOGFD("Start unregister");
+@@ -3929,6 +3983,9 @@ void WindowImpl::ClearListenersById(uint32_t winId)
+     ClearUselessListeners(dialogTargetTouchListeners_, winId);
+     ClearUselessListeners(lifecycleListeners_, winId);
+     ClearUselessListeners(windowChangeListeners_, winId);
++    ClearUselessListeners(windowRectChangeListeners_, winId);
++    ClearUselessListeners(systemDensityChangeListeners_, winId);
++    ClearUselessListeners(windowStatusChangeListeners_, winId);
+     ClearUselessListeners(avoidAreaChangeListeners_, winId);
+     ClearUselessListeners(occupiedAreaChangeListeners_, winId);
+     ClearUselessListeners(dialogDeathRecipientListener_, winId);

@@ -18,7 +18,9 @@
 | 07 | `07-kernel-fs-verity-enable.patch` | kernel/linux/linux-6.6 | fs-verity 支持：从 6.15 回移的最小 /sys/fs/verity 接口（sysfs.c 新文件 + init 挂接）。配合补丁 04 里 oh_defconfig 的 `CONFIG_FS_VERITY=y`（内核配置开关）一起生效。官方应用签名链 HAP 安装（错误码 9568393）的内核侧依赖 |
 | 08 | `08-code-sign-x86-statx-nr.patch` | base/security/code_signature | `IsSupportFsVerity` 使用架构正确的 SYS_statx（x86_64=332）。原先经 `<asm/unistd.h>` 误用 asm-generic/aarch64 的 291，在 x86_64 上变成 `epoll_create1` → errno=22 → 安装 9568393。ioctl/FEATURE_R15 通过不能单独当作签名安装可用 |
 | 09 | `09-graphic_2d-flutter-surface-forcecpu.patch` | foundation/graphic/graphic_2d | Flutter/XComponent SURFACE 在 `/data/egl_no_init` CPU 合成下强制 `CreateBufferDrawParam(..., forceCPU=true)`，走 `DrawBuffer(CPU)` 把 producer buffer 画进 uni-render（否则 EGLImage/OES 采样为空 → 白屏）。需配合 `rosen.client_composition.enabled=1` 与 HAP `--enable-software-rendering`；说明见 `../docs/FLUTTER-GRAPHICS.md` |
-| 12 | `12-x86-product-model-emulator.patch` | vendor/opc | `const.product.model=emulator`（`devicetype` 保持 tablet）。FlutterLoader 因此不传 `--enable-impeller`，任意 oh-3.35 系 `libflutter.so` 走 Skia GL，不再按 so 打补丁 |
+| 12 | `12-x86-product-model-emulator.patch` | vendor/opc | `const.product.model=emulator`。FlutterLoader 因此不传 `--enable-impeller`，任意 oh-3.35 系 `libflutter.so` 走 Skia GL，不再按 so 打补丁 |
+| 13 | `13-x86-phone-immersive-window.patch` | vendor/opc | 在补丁 12 之上：`devicetype=phone`，`product.name=ohos phone`（不再是 general pc），`const.window.multiWindowUIType=HandsetSmartWindow`，窗口默认全屏（mode 1）且关闭主窗装饰。`const.bms.supportAppTypes=phone,tablet` 让只声明 phone 或只声明 tablet 的 HAP 都能过安装类型校验。窗口身份仍是 phone，`setWindowLayoutFullScreen(true)` 走手机沉浸路径 |
+| 14 | `14-windowimpl-phone-listeners-decor.patch` | foundation/window/window_manager | 这张盘不跑 sceneboard，主窗是 `WindowImpl`。补上 `windowRectChange` / `systemDensityChange` / `windowStatusChange` 的注册，以及 `GetDecorVisible=false`、`GetDecorHeight=0`。否则未改的 RNOH Sample 会在 `loadContent` 前收到 801。20261112 镜像里的 `libwm.z.so` 是对这几个虚函数槽的热修（返回成功），不是这次源码重链出来的 so；下次全量编译会带上本补丁 |
 
 ## untracked/（新增文件，直接拷入源码树）
 
@@ -50,6 +52,11 @@ git -C device/soc/opc                apply <本目录>/03-*.patch
 git -C device/board/opc              apply <本目录>/04-*.patch
 git -C third_party/mesa3d            apply <本目录>/05-*.patch
 git -C base/security/code_signature  apply <本目录>/08-*.patch
+git -C kernel/linux/linux-6.6        apply <本目录>/11-*.patch
+# 12、13 的路径从源码树根算起（vendor/opc/...）
+patch -p1 -d <源码树根> < <本目录>/12-*.patch
+patch -p1 -d <源码树根> < <本目录>/13-*.patch
+git -C foundation/window/window_manager apply <本目录>/14-*.patch
 cp -r <本目录>/untracked/modules_gpu <本目录>/untracked/modules_net device/board/opc/x86_general/
 cp <本目录>/untracked/zz_net_setup.cfg device/board/opc/x86_general/cfg/
 cp -r <本目录>/untracked/gpu-chipsetsdk-libs device/soc/opc/x86_general/hardware/gpu/lib64/chipsetsdk

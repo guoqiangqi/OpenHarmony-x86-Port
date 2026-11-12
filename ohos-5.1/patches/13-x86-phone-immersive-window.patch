@@ -1,0 +1,37 @@
+diff --git a/vendor/opc/x86_general/custom_conf/window/window_manager_config.xml b/vendor/opc/x86_general/custom_conf/window/window_manager_config.xml
+--- a/vendor/opc/x86_general/custom_conf/window/window_manager_config.xml
++++ b/vendor/opc/x86_general/custom_conf/window/window_manager_config.xml
+@@ -15,7 +15,7 @@
+  -->
+ <Configs>
+     <!--decor enable is true means app main window show decoration-->
+-    <decor enable="true">
++    <decor enable="false">
+         <!--supportedMode could be configed as fullscreen, floating, split or the combination of them-->
+         <supportedMode>floating fullscreen</supportedMode>
+     </decor>
+@@ -32,7 +32,7 @@
+     <!--split screen ratios config-->
+     <splitRatios>0.5 0.33 0.67</splitRatios>
+     <!--default window mode config-->
+-    <defaultWindowMode>102</defaultWindowMode>
++    <defaultWindowMode>1</defaultWindowMode>
+     <!--window animation config-->
+     <windowAnimation>
+         <timing>
+diff --git a/vendor/opc/x86_general/etc/para/product_x86_general.para b/vendor/opc/x86_general/etc/para/product_x86_general.para
+--- a/vendor/opc/x86_general/etc/para/product_x86_general.para
++++ b/vendor/opc/x86_general/etc/para/product_x86_general.para
+@@ -13,8 +13,10 @@
+ 
+ const.product.brand=general
+ const.build.product=default
+-const.product.name="general pc"
++const.product.name="ohos phone"
+ const.product.model="emulator"
+ const.product.manufacturer=general
+ const.security.developermode.state=true
+-const.product.devicetype=tablet
++const.product.devicetype=phone
++const.window.multiWindowUIType=HandsetSmartWindow
++const.bms.supportAppTypes=phone,tablet
